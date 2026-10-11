@@ -1,0 +1,515 @@
+import * as THREE from 'three';
+import { atlasTexture, hasPart, kitReady, part } from '../assets/kit.ts';
+import { mulberry32 } from '../../shared/hash.ts';
+import type { GroundDetail, PlanetId } from '../core/settings.ts';
+
+/**
+ * The three worlds you can put the colony on, and the terrain generator that draws them.
+ *
+ * Ported from Bot Crossing. A planet is nothing but a bag of colours and a couple of
+ * switches -- terrain, scatter, sky and lighting all read from the same preset, so adding
+ * a fourth world is a data change rather than a code change.
+ *
+ * This module never touches the DOM: it builds geometry and materials only, so it can be
+ * imported (and its terrain sampled) from a Node test.
+ */
+
+export interface PlanetGround {
+  low: number;
+  high: number;
+  tint: number;
+}
+
+/** The daytime dome gradient. Night is derived from it by the sky, not stored. */
+export interface PlanetSkyPalette {
+  top: number;
+  bottom: number;
+}
+
+export interface PlanetFog {
+  color: number;
+  near: number;
+  far: number;
+}
+
+export interface PlanetSun {
+  color: number;
+  intensity: number;
+  /** Sun intensity after dark: what keeps the world from going fully black. */
+  night: number;
+}
+
+export interface PlanetAmbient {
+  sky: number;
+  ground: number;
+  intensity: number;
+}
+
+/** The big body hanging in the sky: Earth from the Moon, a moon from Terra. */
+export interface PlanetCompanion {
+  name: string;
+  color: number;
+  size: number;
+  glow: number;
+}
+
+export type ScatterKindId = 'rocks' | 'flora';
+
+export interface Planet {
+  id: PlanetId;
+  name: string;
+  blurb: string;
+  ground: PlanetGround;
+  /** Boulder tint; the scatter multiplies the pack's grey stone by it. */
+  rock: number;
+  horizon: number;
+  sky: PlanetSkyPalette;
+  fog: PlanetFog;
+  sun: PlanetSun;
+  ambient: PlanetAmbient;
+  /** 0 airless .. 1 earthlike: drives haze, sun glow, dusk colour and how stars wash out. */
+  atmosphere: number;
+  craters: number;
+  /** Terrain amplitude multiplier. */
+  roughness: number;
+  scatter: ScatterKindId;
+  companion: PlanetCompanion;
+  dust: number;
+}
+
+// Fog near/far are the source values times 1.8, for this project's bigger map.
+export const PLANETS: Readonly<Record<PlanetId, Planet>> = {
+  moon: {
+    id: 'moon',
+    name: 'Luna',
+    blurb: 'Airless, high contrast, very long shadows.',
+    ground: { low: 0x4a4a52, high: 0x8f8d90, tint: 0xb9b4ae },
+    rock: 0x6d6a70,
+    horizon: 0x14141c,
+    sky: { top: 0x05060c, bottom: 0x101018 },
+    fog: { color: 0x07080e, near: 100 * 1.8, far: 235 * 1.8 },
+    sun: { color: 0xfff4e2, intensity: 2.6, night: 0.05 },
+    ambient: { sky: 0x3a4258, ground: 0x4a423a, intensity: 0.7 },
+    // No atmosphere: shadows stay black and the stars never wash out.
+    atmosphere: 0,
+    craters: 26,
+    roughness: 0.9,
+    scatter: 'rocks',
+    companion: { name: 'Earth', color: 0x4a7fc9, size: 5.4, glow: 0x6ea8ff },
+    dust: 0,
+  },
+  mars: {
+    id: 'mars',
+    name: 'Mars',
+    blurb: 'Rust, dust, and a pink sky at noon.',
+    ground: { low: 0x6b3320, high: 0xb56b40, tint: 0xd89464 },
+    rock: 0x8a4a2c,
+    horizon: 0x3a2118,
+    sky: { top: 0x2b1a1e, bottom: 0xc4703c },
+    fog: { color: 0x50301f, near: 82 * 1.8, far: 205 * 1.8 },
+    sun: { color: 0xffd9b0, intensity: 2.2, night: 0.09 },
+    ambient: { sky: 0xc07a52, ground: 0x4a2418, intensity: 0.75 },
+    atmosphere: 0.55,
+    craters: 12,
+    roughness: 1.15,
+    scatter: 'rocks',
+    companion: { name: 'Phobos', color: 0x9a8878, size: 1.5, glow: 0xb8a494 },
+    dust: 1,
+  },
+  terra: {
+    id: 'terra',
+    name: 'Terra',
+    blurb: 'An earthlike one. Grass, blue hour, fireflies.',
+    ground: { low: 0x2f5a34, high: 0x6d9a4a, tint: 0x86ae5c },
+    rock: 0x6b6f63,
+    horizon: 0x6fa8d8,
+    sky: { top: 0x1d4d8f, bottom: 0x9ec8e8 },
+    fog: { color: 0x6b8fa8, near: 92 * 1.8, far: 230 * 1.8 },
+    sun: { color: 0xfff0d4, intensity: 2.4, night: 0.13 },
+    ambient: { sky: 0x88bfe8, ground: 0x3f5a30, intensity: 0.95 },
+    atmosphere: 1,
+    craters: 0,
+    roughness: 0.75,
+    scatter: 'flora',
+    companion: { name: 'Moon', color: 0xdcd8cc, size: 3.2, glow: 0xfff6e0 },
+    dust: 0.25,
+  },
+};
+
+/** Side of the terrain plane. 340 in the source; 600 for this project's bigger city. */
+export const GROUND_SIZE = 600;
+/** Everything inside this radius is the buildable colony, and is kept nearly flat. 46 in the source. */
+export const COLONY_RADIUS = 160;
+const DETAIL_SEGMENTS: Readonly<Record<GroundDetail, number>> = { low: 72, medium: 128, high: 190 };
+/** The one seed every terrain field is built from: the mesh and `terrainHeight` must agree. */
+const TERRAIN_SEED = 1337;
+
+/**
+ * Terrain is one plane, displaced and vertex-coloured on the CPU at build time. Doing it
+ * once and baking it into the buffer means the GPU only ever sees static geometry -- no
+ * displacement map sample, no per-frame work -- and vertex colours give the surface its
+ * mottling for free rather than costing a texture fetch.
+ */
+export function createTerrain(planet: Planet, detail: GroundDetail): THREE.Mesh {
+  const segments = DETAIL_SEGMENTS[detail] ?? DETAIL_SEGMENTS.medium;
+  const geo = new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE, segments, segments);
+  geo.rotateX(-Math.PI / 2);
+
+  // The same field `terrainHeight` samples, so a prop placed later sits exactly on the mesh.
+  const { noise, craters } = samplerFor(planet);
+  const pos = geo.getAttribute('position');
+  const colors = new Float32Array(pos.count * 3);
+
+  const low = new THREE.Color(planet.ground.low);
+  const high = new THREE.Color(planet.ground.high);
+  const tint = new THREE.Color(planet.ground.tint);
+  const c = new THREE.Color();
+
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const dist = Math.hypot(x, z);
+
+    const y = sampleHeight(x, z, noise, craters, planet);
+    pos.setY(i, y);
+
+    // Colour: height-driven blend, mottled with a second noise band so it never bands.
+    const shade = THREE.MathUtils.clamp(0.42 + y * 0.09 + fbm(noise, x * 0.09, z * 0.09, 2) * 0.5, 0, 1);
+    c.copy(low).lerp(high, shade);
+    const speck = fbm(noise, x * 0.55, z * 0.55, 1);
+    c.lerp(tint, Math.max(0, speck) * 0.22);
+    // Darken the far field hard so the eye settles on the colony and the hills read as a
+    // silhouette rather than as more ground competing with the plots for attention.
+    c.multiplyScalar(1 - THREE.MathUtils.smoothstep(dist, COLONY_RADIUS * 0.7, GROUND_SIZE * 0.35) * 0.75);
+    colors[i * 3] = c.r;
+    colors[i * 3 + 1] = c.g;
+    colors[i * 3 + 2] = c.b;
+  }
+
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.97,
+    metalness: 0,
+    // Flat-ish shading keeps the low-poly read; a dielectric surface with no spec highlight
+    // is what sells "dust" rather than "plastic".
+    envMapIntensity: 0.3,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.receiveShadow = true;
+  mesh.name = 'terrain';
+  return mesh;
+}
+
+interface Crater {
+  x: number;
+  z: number;
+  r: number;
+  depth: number;
+}
+
+type Noise = (x: number, y: number) => number;
+
+function sampleHeight(x: number, z: number, noise: Noise, craters: readonly Crater[], planet: Planet): number {
+  const dist = Math.hypot(x, z);
+  // Flat where the colony lives, then hills that ramp in over the next forty metres --
+  // so nothing ever builds on a slope but the horizon still has shape to it.
+  const outside = THREE.MathUtils.smoothstep(dist, COLONY_RADIUS - 6, COLONY_RADIUS + 40);
+  const gentle = fbm(noise, x * 0.035, z * 0.035, 3) * 0.5;
+  const hills = fbm(noise, x * 0.012, z * 0.012, 4) * 9 + fbm(noise, x * 0.05, z * 0.05, 2) * 1.4;
+  let y = gentle * planet.roughness * (1 - outside) + hills * outside * planet.roughness;
+  for (const crater of craters) {
+    const d = Math.hypot(x - crater.x, z - crater.z);
+    if (d > crater.r * 1.5) continue;
+    // A bowl with a raised rim -- the rim is what makes it read as an impact.
+    const t = d / crater.r;
+    if (t < 1) y -= (1 - t * t) * crater.depth;
+    else y += (1 - Math.abs(t - 1.22) / 0.28) * crater.depth * 0.32;
+  }
+  return y;
+}
+
+/** Craters only ever land outside the colony, so they never eat a build plot. */
+function makeCraters(count: number, seed: number): Crater[] {
+  const rand = mulberry(seed ^ 0x9e37);
+  const out: Crater[] = [];
+  for (let i = 0; i < count; i++) {
+    const a = rand() * Math.PI * 2;
+    const d = COLONY_RADIUS + 14 + rand() * 110;
+    const r = 4 + rand() * 16;
+    out.push({ x: Math.cos(a) * d, z: Math.sin(a) * d, r, depth: r * (0.18 + rand() * 0.16) });
+  }
+  return out;
+}
+
+// -- scatter ---------------------------------------------------------------------------
+
+/** 900 in the source; doubled with the scatter reach so the wider ground stays as dense. */
+const SCATTER_BUDGET = 1800;
+
+/**
+ * Rocks, boulders and plants. All instanced, all placed with a deterministic RNG so the
+ * same planet always looks the same, and all kept clear of the plots and walkways.
+ */
+/**
+ * What grows on a world, and how it is planted.
+ *
+ * `weight` is how often a shape comes up relative to its siblings, `size` the range of its
+ * base scale, and `sink` how far into the ground it settles as a fraction of that scale.
+ * A boulder half-buried reads as bedrock; a tree buried by the same amount reads as a
+ * mistake, so the two want very different numbers.
+ *
+ * All of it comes from KayKit's Forest Nature Pack, which is why the same list can dress a
+ * meadow and a crater field: its boulders are painted neutral grey, so a per-instance tint
+ * takes them to lunar dust or Martian rust without touching the atlas.
+ */
+interface ScatterRecipe {
+  part: string;
+  weight: number;
+  size: readonly [number, number];
+  sink: number;
+  upright?: boolean;
+  tint?: boolean;
+}
+
+interface ScatterKind {
+  geo: THREE.BufferGeometry;
+  weight: number;
+  size: readonly [number, number];
+  sink: number;
+  upright: boolean;
+  tint: boolean;
+}
+
+const SCATTER: Readonly<Record<ScatterKindId, readonly ScatterRecipe[]>> = {
+  flora: [
+    { part: 'Tree_1_A_Color1', weight: 3, size: [0.35, 0.6], sink: 0.02, upright: true },
+    { part: 'Tree_3_A_Color1', weight: 3, size: [0.35, 0.6], sink: 0.02, upright: true },
+    { part: 'Tree_4_A_Color1', weight: 2, size: [0.3, 0.55], sink: 0.02, upright: true },
+    { part: 'Tree_1_C_Color1', weight: 1, size: [0.25, 0.4], sink: 0.02, upright: true },
+    { part: 'Tree_3_C_Color1', weight: 1, size: [0.22, 0.38], sink: 0.02, upright: true },
+    { part: 'Tree_4_C_Color1', weight: 1, size: [0.2, 0.35], sink: 0.02, upright: true },
+    { part: 'Bush_1_E_Color1', weight: 3, size: [0.5, 1.1], sink: 0.06, upright: true },
+    { part: 'Bush_3_B_Color1', weight: 3, size: [0.5, 1.1], sink: 0.06, upright: true },
+    { part: 'Grass_2_D_Color1', weight: 4, size: [0.6, 1.3], sink: 0.05, upright: true },
+    { part: 'Rock_1_D_Color1', weight: 2, size: [0.4, 0.9], sink: 0.3, tint: true },
+  ],
+  rocks: [
+    { part: 'Rock_1_D_Color1', weight: 4, size: [0.5, 1.2], sink: 0.3, tint: true },
+    { part: 'Rock_2_C_Color1', weight: 4, size: [0.5, 1.2], sink: 0.3, tint: true },
+    { part: 'Rock_3_E_Color1', weight: 3, size: [0.6, 1.4], sink: 0.15, tint: true },
+    { part: 'Rock_1_J_Color1', weight: 1, size: [0.3, 0.7], sink: 0.25, tint: true },
+    { part: 'Rock_2_G_Color1', weight: 1, size: [0.3, 0.7], sink: 0.25, tint: true },
+    { part: 'Rock_3_L_Color1', weight: 2, size: [0.4, 0.9], sink: 0.12, tint: true },
+    { part: 'Rock_3_Q_Color1', weight: 1, size: [0.25, 0.55], sink: 0.1, tint: true },
+  ],
+};
+
+/** The fallback when the kit has not loaded: the primitives this used to be made of. */
+function fallbackShapes(isFlora: boolean): ScatterKind[] {
+  const shapes: THREE.BufferGeometry[] = isFlora
+    ? [new THREE.IcosahedronGeometry(0.5, 0), new THREE.ConeGeometry(0.42, 1.5, 5), new THREE.SphereGeometry(0.5, 6, 4)]
+    : [
+        new THREE.DodecahedronGeometry(0.55, 0),
+        new THREE.IcosahedronGeometry(0.6, 0),
+        new THREE.TetrahedronGeometry(0.72, 0),
+      ];
+  for (const g of shapes) g.computeVertexNormals();
+  return shapes.map((geo) => ({ geo, weight: 1, sink: 0.25, size: [0.28, 0.83], tint: true, upright: false }));
+}
+
+export interface KeepClear {
+  x: number;
+  z: number;
+  r: number;
+}
+
+export function createScatter(
+  planet: Planet,
+  density: number,
+  keepClear: readonly KeepClear[] = [],
+  seed = 4242,
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'scatter';
+  const count = Math.round(SCATTER_BUDGET * THREE.MathUtils.clamp(density, 0, 1));
+  if (count <= 0) return group;
+
+  const rand = mulberry(seed);
+  const isFlora = planet.scatter === 'flora';
+  const recipe = SCATTER[planet.scatter] ?? SCATTER.rocks;
+  const ready = kitReady('forest') && recipe.every((r) => hasPart(r.part, 'forest'));
+
+  const kinds: ScatterKind[] = ready
+    ? recipe.map((r) => ({
+        geo: part(r.part, 'forest'),
+        weight: r.weight,
+        size: r.size,
+        sink: r.sink,
+        upright: r.upright ?? false,
+        tint: r.tint ?? false,
+      }))
+    : fallbackShapes(isFlora);
+
+  // One material for the lot. The pack's atlas carries the greens and the greys, and the
+  // per-instance colour is a *tint* on top of it -- white for anything already the right
+  // colour, the planet's own rock for a boulder that has to belong to this world.
+  const atlas = ready ? atlasTexture('forest') : null;
+  const material = new THREE.MeshStandardMaterial({
+    map: atlas,
+    color: 0xffffff,
+    roughness: isFlora ? 0.82 : 0.95,
+    metalness: 0,
+    flatShading: !ready,
+  });
+
+  const total = kinds.reduce((sum, k) => sum + k.weight, 0);
+  const meshes = kinds.map(
+    (k) => new THREE.InstancedMesh(k.geo, material, Math.ceil((count * k.weight) / total) + 8),
+  );
+
+  const rock = new THREE.Color(planet.rock);
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+  const fill: number[] = new Array<number>(kinds.length).fill(0);
+
+  // Pick by weight: a cumulative table beats a uniform index when a fir should be rarer
+  // than a grass tuft.
+  const pickKind = (): number => {
+    let roll = rand() * total;
+    for (let i = 0; i < kinds.length; i++) {
+      roll -= kinds[i]!.weight;
+      if (roll <= 0) return i;
+    }
+    return kinds.length - 1;
+  };
+
+  for (let i = 0; i < count; i++) {
+    // Bias outward: a ring is thicker where there is more area, which sqrt gives for free.
+    // Reach is 300, not the source's 150: the props have to make it out to the wider ground.
+    const a = rand() * Math.PI * 2;
+    const d = 9 + Math.sqrt(rand()) * 300;
+    const x = Math.cos(a) * d;
+    const z = Math.sin(a) * d;
+    if (keepClear.some((p) => Math.hypot(x - p.x, z - p.z) < p.r)) continue;
+
+    const which = pickKind();
+    const kind = kinds[which]!;
+    const mesh = meshes[which]!;
+    const slot = fill[which] ?? 0;
+    if (slot >= mesh.instanceMatrix.count) continue;
+
+    // Far-field props are allowed to be much bigger, which reads as distance.
+    // The ramp ends at 260, twice the source's 130, in step with the doubled reach: left at
+    // 130 it would end inside COLONY_RADIUS and collapse into a hard step at the colony edge.
+    const far = THREE.MathUtils.smoothstep(d, COLONY_RADIUS, 260);
+    const [lo, hi] = kind.size;
+    const s = (lo + rand() * (hi - lo)) * (1 + far * 1.9);
+
+    dummy.position.set(x, terrainHeight(x, z, planet) - s * kind.sink, z);
+    // A tree that leans is a fallen tree. Boulders may lie however they landed.
+    if (kind.upright) dummy.rotation.set(0, rand() * Math.PI * 2, 0);
+    else dummy.rotation.set((rand() - 0.5) * 0.5, rand() * Math.PI * 2, (rand() - 0.5) * 0.5);
+    const jitter = kind.upright ? 0.14 : 0.35;
+    dummy.scale.set(
+      s * (1 - jitter / 2 + rand() * jitter),
+      s * (1 - jitter / 2 + rand() * jitter),
+      s * (1 - jitter / 2 + rand() * jitter),
+    );
+    dummy.updateMatrix();
+    mesh.setMatrixAt(slot, dummy.matrix);
+
+    // Foliage keeps the colour it was painted; rock takes the planet's. The tint is lifted
+    // because it *multiplies* the atlas rather than replacing it -- the pack's stone is a
+    // mid grey, and rust times mid grey is a much darker rust than the ground it sits on.
+    if (kind.tint) color.copy(rock).multiplyScalar(1.55);
+    else color.setRGB(1, 1, 1);
+    color.offsetHSL((rand() - 0.5) * 0.03, (rand() - 0.5) * 0.08, (rand() - 0.5) * 0.14);
+    mesh.setColorAt(slot, color);
+    fill[which] = slot + 1;
+  }
+
+  meshes.forEach((mesh, i) => {
+    mesh.count = fill[i] ?? 0;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    group.add(mesh);
+  });
+  return group;
+}
+
+/**
+ * Terrain height at a world point -- the same field the mesh was built from, evaluated on
+ * demand. Used to place scatter, and to keep anything that walks on the ground *on* it.
+ */
+export function terrainHeight(x: number, z: number, planet: Planet): number {
+  const { noise, craters } = samplerFor(planet);
+  return sampleHeight(x, z, noise, craters, planet);
+}
+
+interface Sampler {
+  noise: Noise;
+  craters: Crater[];
+}
+
+// One sampler per planet, built on first use: the noise table is 256 KiB and the craters
+// are a seeded roll, so building them per call would make every height read a world build.
+const samplers = new Map<PlanetId, Sampler>();
+function samplerFor(planet: Planet): Sampler {
+  let s = samplers.get(planet.id);
+  if (!s) {
+    s = { noise: makeNoise(TERRAIN_SEED), craters: makeCraters(planet.craters, TERRAIN_SEED) };
+    samplers.set(planet.id, s);
+  }
+  return s;
+}
+
+// -- noise -----------------------------------------------------------------------------
+
+/**
+ * Small deterministic PRNG -- same seed, same world, every reload. The very same
+ * mulberry32 the layout uses, re-exported under the name the source gave it.
+ */
+export const mulberry = mulberry32;
+
+/** Value noise on a hashed lattice with smoothstep interpolation -- cheap and smooth enough. */
+function makeNoise(seed: number): Noise {
+  const rand = mulberry(seed);
+  const size = 256;
+  const table = new Float32Array(size * size);
+  for (let i = 0; i < table.length; i++) table[i] = rand() * 2 - 1;
+
+  return function noise(x: number, y: number): number {
+    const xi = Math.floor(x);
+    const yi = Math.floor(y);
+    const xf = x - xi;
+    const yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf);
+    const v = yf * yf * (3 - 2 * yf);
+    const at = (a: number, b: number): number =>
+      table[(((a % size) + size) % size) * size + (((b % size) + size) % size)]!;
+    const a = at(xi, yi);
+    const b = at(xi + 1, yi);
+    const c = at(xi, yi + 1);
+    const d = at(xi + 1, yi + 1);
+    return a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v;
+  };
+}
+
+function fbm(noise: Noise, x: number, y: number, octaves: number): number {
+  let sum = 0;
+  let amp = 1;
+  let freq = 1;
+  let norm = 0;
+  for (let i = 0; i < octaves; i++) {
+    sum += noise(x * freq, y * freq) * amp;
+    norm += amp;
+    amp *= 0.5;
+    freq *= 2.07;
+  }
+  return sum / norm;
+}

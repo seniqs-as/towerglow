@@ -1,0 +1,58 @@
+{
+  "name": "towerglow",
+  "version": "0.1.0",
+  "description": "A live 3D city of your Claude Code and Codex sessions. A local, read-only observatory by default; optional AI advisors with --ceo.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "bin": {
+    "towerglow": "bin/towerglow.mjs"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "docs",
+    "README.md",
+    "SECURITY.md",
+    "PRIVACY.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "sideEffects": false,
+  "dependencies": {
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "@types/three": "0.185.4",
+    "@types/ws": "8.18.1",
+    "three": "0.185.0",
+    "typescript": "7.0.2",
+    "vite": "8.2.2"
+  },
+  "scripts": {
+    "dev:server": "node --watch src/server/cli.ts start --dev",
+    "dev:client": "vite",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:client": "vite build && node -e \"require('node:fs').copyFileSync('src/client/assets/CREDITS.md','dist/client/CREDITS.md')\"",
+    "build": "node --run build:server && node --run build:client",
+    "start": "node bin/towerglow.mjs start",
+    "doctor": "node bin/towerglow.mjs doctor",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "check:bundle": "node scripts/check-bundle.mjs",
+    "check:deps": "node scripts/check-deps.mjs",
+    "check:passive": "node scripts/check-passive.mjs"
+  },
+  "author": "Seniqs AS",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seniqs-as/towerglow.git"
+  },
+  "homepage": "https://github.com/seniqs-as/towerglow#readme",
+  "bugs": {
+    "url": "https://github.com/seniqs-as/towerglow/issues"
+  }
+}

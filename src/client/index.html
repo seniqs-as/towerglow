@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- Fallback CSP: the authoritative one is sent by the server as a header.
+         default-src 'none' means no external resource can be loaded,
+         not even if a bug introduced one. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
+    />
+    <title>Towerglow</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!-- Two views of the same world, one canvas each: the city the page opens
+         on, light enough for any machine, and the colony, drawn only once
+         you switch to it. Only the visible one runs its frame loop. -->
+    <canvas id="city"></canvas>
+    <canvas id="stage" hidden></canvas>
+
+    <div id="labels"></div>
+    <!-- Separate from #labels because badges are clickable: #labels is
+         `pointer-events: none` so it does not steal the drag from the camera. -->
+    <div id="badges"></div>
+    <aside id="card" class="card" hidden></aside>
+
+    <div id="hud" class="hud">
+      <div class="hud__brand">
+        <span class="hud__dot" id="link-dot" data-state="off"></span>
+        <span class="hud__title">TOWERGLOW</span>
+        <!-- The chevron folds everything below the brand; the dot stays, it is
+             how a dropped connection shows. -->
+        <button type="button" class="fold" id="hud-fold"></button>
+      </div>
+      <!-- The plan stopped: a worker asks, a task failed, the reserve or a
+           session of yours holds it. Outside the fold, like the dot: it is
+           the one thing here that waits for you. A click opens the plan. -->
+      <button type="button" class="hud__alert" id="planning-alert" hidden></button>
+      <div id="hud-body">
+      <dl class="hud__stats">
+        <div><dt>projects</dt><dd id="stat-projects">0</dd></div>
+        <div><dt>sessions</dt><dd id="stat-sessions">0</dd></div>
+        <div><dt>agents</dt><dd id="stat-agents">0</dd></div>
+        <div><dt>files</dt><dd id="stat-files">0</dd></div>
+        <div><dt>fps</dt><dd id="stat-fps">—</dd></div>
+      </dl>
+      <!-- Every button lives in this corner, as a glyph; what it opens shows
+           on hover, read from its aria-label by the CSS. The other corner is
+           the quota alone. Four groups: the colony, the CEOs (only with
+           --ceo), the way back for projects taken out of the view, and the
+           settings with the instructions. -->
+      <div class="hud__buttons">
+        <div class="hud__group">
+          <button type="button" class="hud__icon" id="stats-open" aria-label="Statistics"></button>
+          <button type="button" class="hud__icon" id="forecast-open" aria-label="Usage forecast"></button>
+          <button type="button" class="hud__icon" id="legend-open" aria-label="Legend"></button>
+        </div>
+        <div class="hud__group">
+          <!-- Hidden without --ceo: without the CEOs, there is nobody to talk to. -->
+          <button type="button" class="hud__icon" id="boardroom-open" aria-label="Board" hidden></button>
+          <!-- Beside board and not inside it: board is where you decide, here you
+               read what happened after deciding. -->
+          <button type="button" class="hud__icon" id="reports-open" aria-label="Reports" hidden></button>
+          <button type="button" class="hud__icon" id="effect-open" aria-label="Outcomes" hidden></button>
+          <!-- The meeting and the plan: what the CEOs will launch for you
+               while you are away. The mark beside it is work left in the plan
+               (lime: running, violet ring: waiting); the number is questions
+               waiting for you. -->
+          <button type="button" class="hud__icon hud__icon--count" id="planning-open" aria-label="Planning" hidden></button>
+        </div>
+        <!-- It sits here and not beside the quotas: it is a fact about the CITY --
+             how many buildings are missing from the roll call -- like the
+             counters above, not a number about usage. -->
+        <div class="hud__group hud__restore">
+          <button type="button" class="hud__icon hud__icon--count" id="spend-restore" hidden></button>
+        </div>
+        <!-- Last, at the far right: settings change how the world is drawn,
+             instructions how to move around it, and neither reads the colony. -->
+        <div class="hud__group">
+          <!-- City or colony: the same projects and sessions, drawn light or in full. -->
+          <button type="button" class="hud__icon" id="view-toggle" aria-label="Colony view"></button>
+          <button type="button" class="hud__icon" id="settings-open" aria-label="Settings"></button>
+          <!-- The commands used to be a line of text under these buttons; now
+               they are this glyph's hover text, a list instead of one word.
+               A click keeps them up, since a touch screen has no hover. -->
+          <button type="button" class="hud__icon hud__icon--help" id="help-open" aria-label="Instructions" aria-describedby="help-tip"><span class="hud__tip" id="help-tip"><span class="hud__tip-title" aria-hidden="true">Instructions</span><b>drag</b><span>move</span><b>scroll</b><span>zoom</span><b>V</b><span>city / colony view</span><b data-colony-key>H</b><span data-colony-key>ship</span><b>C</b><span>whole map</span><b data-colony-key>P</b><span data-colony-key>planet</span><b data-colony-key>T</b><span data-colony-key>time</span><b data-colony-key>O</b><span data-colony-key>orbit</span><b data-ceo-key hidden>E</b><span data-ceo-key hidden>enter the ship</span></span></button>
+        </div>
+      </div>
+      </div>
+    </div>
+
+    <!-- Usage per tool. These are the tokens already counted per session, summed
+         per provider: no new source, just a total. -->
+    <!-- Top right holds the quota and nothing else: the buttons moved to the
+         other corner. The whole corner hides while no tool is in the colony,
+         chevron included, since there would be nothing to fold. -->
+    <div id="spend" class="topright" hidden>
+      <!-- Pinned to the corner, so it does not move when what it folds is gone. -->
+      <button type="button" class="fold topright__fold" id="topright-fold"></button>
+      <div id="topright-body" class="topright__body spend">
+        <div class="spend__rows" id="spend-rows"></div>
+      </div>
+    </div>
+
+    <!-- Inside the ship: how to walk, where the Board opens, the way out. -->
+    <div id="inside-hint" class="inside-hint" hidden>
+      <b>WASD</b><span>walk</span><b>desk</b><span>talk to the CEO</span><b>E</b><span>leave, or walk back to the hatch</span>
+    </div>
+
+    <div id="empty" class="empty" hidden>
+      <h1>No sessions running</h1>
+      <p>Open a terminal and run <code>claude</code> or <code>codex</code> in a project: its tower lights up as the work starts.</p>
+    </div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

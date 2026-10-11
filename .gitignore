@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.local
+*.log
+.DS_Store
+
+# Never commit local data: fixtures are synthetic and live only in test/fixtures/
+*.jsonl
+!test/fixtures/*.jsonl

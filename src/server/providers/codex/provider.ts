@@ -1,0 +1,538 @@
+import * as path from 'node:path';
+import type { DeltaEvent, SessionStatus, TargetRef, ToolCategory } from '../../../shared/protocol.ts';
+import { assertSafe, clampUnsafe } from '../../parse/redact.ts';
+import type { ParseStats } from '../../parse/records.ts';
+import { fileIdFor, projectIdFor, redactRelPath } from '../../state/ids.ts';
+import { Tailer } from '../../watch/tailer.ts';
+import { CodexStore } from './store.ts';
+import { discoverRollouts, newestRollout, parseRolloutLine, readLastLimits, readLastPlan } from './rollouts.ts';
+import type { RolloutMeta } from './rollouts.ts';
+import type { LiveSession, Provider, ProviderContext } from '../types.ts';
+import type { PathPolicy } from '../../paths.ts';
+
+const POLL_MS = 900;
+/**
+ * How often to re-read the PIDs from the logs.
+ *
+ * It does not drive the scene's pulse -- the rollout tells the status -- it
+ * only lets us bring the right terminal to the front, so the SQLite query is
+ * paid rarely instead of on every tick.
+ */
+const PID_REFRESH_MS = 30_000;
+/** A rollout left untouched this long is no longer a live session. */
+const LIVE_WINDOW_MS = 30 * 60_000;
+/** After a turn closes, how long it stays "active" before it waits again. */
+const SETTLE_MS = 4000;
+
+export interface CodexProviderOptions {
+  codexDir: string;
+  policy: PathPolicy;
+  redactPaths: boolean;
+  cmdNames: boolean;
+  titles: boolean;
+  /** The project exists for the program (startup rule `--exclude`). */
+  known: (cwd: string) => boolean;
+  /** A session can come from this project: also excludes the disabled ones. */
+  produces: (cwd: string) => boolean;
+  devAssert: boolean;
+  /** Shared with the rest of the server: the redaction guard counts here. */
+  stats: ParseStats;
+}
+
+/** Codex `item.type`s mapped onto the categories already in use. */
+/**
+ * First line of the user's message, truncated. Never the whole body.
+ *
+ * It is the same thing Codex derives the thread name from, so it does not
+ * introduce a new category of data; the only difference is that here it is
+ * the LAST prompt instead of the first, and it is governed by the same
+ * --no-titles flag.
+ */
+function firstLineOf(item: Record<string, unknown>): string | null {
+  const content = item['content'];
+  let text: string | null = null;
+  if (typeof content === 'string') text = content;
+  else if (Array.isArray(content)) {
+    for (const block of content) {
+      const b = block as Record<string, unknown> | null;
+      if (b && b['type'] === 'text' && typeof b['text'] === 'string') {
+        text = b['text'];
+        break;
+      }
+    }
+  }
+  if (!text) return null;
+  const line = text.split('\n')[0]?.trim() ?? '';
+  return line.length > 0 ? line.slice(0, 90) : null;
+}
+
+const CATEGORY: Record<string, ToolCategory | null> = {
+  CommandExecution: 'exec',
+  FileChange: 'edit',
+  Extension: 'net',
+  ImageView: 'read',
+  McpToolCall: 'mcp',
+  TodoList: 'plan',
+  Reasoning: null,
+  AgentMessage: null,
+  UserMessage: null,
+};
+
+interface Attached {
+  meta: RolloutMeta;
+  tailer: Tailer;
+  /** Open turn: `task_started` without its `task_complete`. */
+  openTurn: string | null;
+  /** Questions to the user still unanswered: if there are any, it is waiting for you. */
+  openAsks: Set<string>;
+  lastActivityMs: number;
+  statusSince: number;
+  model: string | null;
+  tokens: number;
+  /**
+   * First line of the user's last message.
+   *
+   * Codex, unlike Claude Code, does NOT regenerate a title on every turn:
+   * `session_index.jsonl` carries the name assigned at the first prompt and
+   * never updates it, so after a few hours it describes work that is no
+   * longer the one in progress. The only trace of the current task is the
+   * last prompt -- which is also the very thing Codex derives the thread
+   * name from.
+   */
+  currentTask: string | null;
+  /**
+   * Time spent reasoning, summed.
+   *
+   * Codex stamps every item with its start and end instants, so for
+   * `Reasoning` items the duration is a measured figure, not an estimate.
+   * That is the difference from Claude Code, which writes its thinking blocks
+   * without any timing of their own.
+   */
+  reasoningMs: number;
+  /** Context window used by the last request, 0-100. */
+  contextPct: number | null;
+}
+
+/**
+ * Codex provider, based on the rollouts.
+ *
+ * Codex does not publish a registry of live sessions the way Claude Code
+ * does. The rollout, though, is appended in real time and carries two
+ * decisive things: the `cwd` in the first line, and the `task_started` /
+ * `task_complete` pair that says whether a turn is in progress. From there an
+ * honest status can be derived without subprocesses.
+ *
+ * One difference from Claude Code remains, declared via `statusConfidence`:
+ * items are written only on COMPLETION, so a long command produces no pulse
+ * until it finishes.
+ */
+export class CodexProvider implements Provider {
+  readonly id = 'codex' as const;
+
+  #opts: CodexProviderOptions;
+  #store: CodexStore;
+  #ctx: ProviderContext | null = null;
+  #timer: NodeJS.Timeout | null = null;
+  #attached = new Map<string, Attached>();
+  #announcedProjects = new Set<string>();
+  #names = new Map<string, string>();
+  #pids = new Map<string, { pid: number; lastTs: number }>();
+  #pidsReadAt = 0;
+  #limitsSeeded = false;
+
+  constructor(opts: CodexProviderOptions) {
+    this.#opts = opts;
+    this.#store = new CodexStore(opts.codexDir, opts.policy);
+  }
+
+  isAvailable(): boolean {
+    return this.#store.available;
+  }
+
+  start(ctx: ProviderContext): void {
+    this.#ctx = ctx;
+    this.#seedLimits();
+    this.#tick();
+    this.#timer = setInterval(() => this.#tick(), POLL_MS);
+    this.#timer.unref?.();
+  }
+
+  stop(): void {
+    if (this.#timer) clearInterval(this.#timer);
+    this.#timer = null;
+    for (const a of this.#attached.values()) void a.tailer.close();
+    this.#attached.clear();
+    this.#ctx = null;
+  }
+
+  /**
+   * Quota used at startup, from the most recent rollout there is.
+   *
+   * It lets the scene start already knowing where you stand, instead of
+   * staying silent until you run a turn. If a live session later sends a
+   * fresher one, that one replaces it.
+   *
+   * The plan alone is worth sending, once: it is what makes the tool's row
+   * appear at all, and the windows may only be in an older rollout than this
+   * one. Nothing is erased by it -- the model merges readings.
+   */
+  #seedLimits(): void {
+    if (this.#limitsSeeded) return;
+    this.#limitsSeeded = true;
+    const newest = newestRollout(this.#opts.codexDir, this.#opts.policy);
+    if (!newest) return;
+    const ev = readLastLimits(newest.file, this.#opts.policy);
+    // The plan from an older rollout when this one never names it.
+    const plan = ev?.plan ?? readLastPlan(
+      discoverRollouts(this.#opts.codexDir, this.#opts.policy, 0)
+        .sort((a, b) => b.mtimeMs - a.mtimeMs)
+        .map((m) => m.file),
+      this.#opts.policy,
+    );
+    if (!ev && plan === null) return;
+    this.#ctx?.onEvents([
+      {
+        t: 'limits',
+        limits: { provider: 'codex', at: ev?.atMs ?? Date.now(), windows: ev?.windows ?? [], plan },
+      },
+    ]);
+  }
+
+  #tick(): void {
+    const ctx = this.#ctx;
+    if (!ctx) return;
+    const now = Date.now();
+
+    if (this.#opts.titles) this.#names = this.#store.readThreadNames();
+    if (now - this.#pidsReadAt >= PID_REFRESH_MS) {
+      this.#pids = this.#store.readThreadPids();
+      this.#pidsReadAt = now;
+    }
+
+    // A subagent rollout carries its parent's session_id. Counted as a session,
+    // the approvals guardian kept an archived chat on stage for half an hour,
+    // with the old chat's context, and could be attached in the chat's place.
+    const found = discoverRollouts(this.#opts.codexDir, this.#opts.policy, now - LIVE_WINDOW_MS)
+      .filter((m) => !m.subagent && this.#opts.produces(m.cwd));
+
+    const projects = [
+      ...this.#store.readDeclaredProjects().filter((p) => this.#opts.known(p)),
+      ...found.map((m) => m.cwd),
+    ];
+    const fresh = projects.filter((p) => !this.#announcedProjects.has(p));
+    if (fresh.length > 0) {
+      for (const p of fresh) this.#announcedProjects.add(p);
+      ctx.onProjects(projects);
+    }
+
+    for (const meta of found) {
+      if (this.#attached.has(meta.sessionId)) continue;
+      void this.#attach(meta, now);
+    }
+
+    const alive = new Set(found.map((m) => m.sessionId));
+    for (const [id, a] of this.#attached) {
+      if (alive.has(id)) continue;
+      void a.tailer.close();
+      this.#attached.delete(id);
+    }
+
+    for (const a of this.#attached.values()) void a.tailer.pump();
+
+    ctx.onSessions(this.#sessions(now));
+  }
+
+  async #attach(meta: RolloutMeta, now: number): Promise<void> {
+    const attached: Attached = {
+      meta,
+      // Placeholder replaced right below: it only exists so `attached` can be
+      // referenced inside the Tailer's callback.
+      tailer: null as unknown as Tailer,
+      openTurn: null,
+      openAsks: new Set(),
+      // Zero and not the mtime: activity is told by the rollout's EVENTS. The
+      // mtime also changes for writes that are not the agent's work, and
+      // seeding from it kept a session "busy" with its turn already closed.
+      lastActivityMs: 0,
+      statusSince: 0,
+      model: null,
+      tokens: 0,
+      currentTask: null,
+      reasoningMs: 0,
+      contextPct: null,
+    };
+
+    // The whole rollout is read: it is a few hundred KB net of tool outputs,
+    // which are discarded by size before parsing. It is needed in full
+    // because `task_started` can sit at the start of the file while the turn
+    // is still open right now.
+    attached.tailer = new Tailer(meta.file, Number.MAX_SAFE_INTEGER, (line) =>
+      this.#onLine(attached, line),
+    );
+    this.#attached.set(meta.sessionId, attached);
+
+    try {
+      await attached.tailer.open();
+    } catch {
+      this.#attached.delete(meta.sessionId);
+      return;
+    }
+    // If the rollout contained not a single useful event, the mtime remains
+    // the only available reference.
+    if (attached.lastActivityMs === 0) attached.lastActivityMs = meta.mtimeMs;
+    if (attached.statusSince === 0) attached.statusSince = attached.lastActivityMs;
+    this.#ctx?.onSessions(this.#sessions(now));
+  }
+
+  #onLine(a: Attached, line: string): void {
+    const ev = parseRolloutLine(line);
+    if (!ev) return;
+
+    switch (ev.kind) {
+      case 'model':
+        a.model = ev.model;
+        return;
+      case 'limits':
+        // The context belongs to the SESSION, the quota to the ACCOUNT: they
+        // arrive in the same record but go to two different recipients.
+        if (ev.contextPct !== null) a.contextPct = ev.contextPct;
+        if (ev.windows.length > 0) {
+          this.#ctx?.onEvents([
+            {
+              t: 'limits',
+              limits: { provider: 'codex', at: ev.atMs, windows: ev.windows, plan: ev.plan },
+            },
+          ]);
+        }
+        return;
+      case 'tokens': {
+        a.tokens = Math.max(a.tokens, ev.total);
+        const d = ev.delta;
+        if (d.in + d.out + d.cacheRead + d.cacheWrite + d.thinking > 0) {
+          this.#ctx?.onEvents([
+            {
+              t: 'usage',
+              sessionId: a.meta.sessionId,
+              agentId: null,
+              at: ev.atMs,
+              model: a.model ?? 'unknown',
+              delta: d,
+            },
+          ]);
+        }
+        return;
+      }
+      case 'ask_started':
+        a.openAsks.add(ev.callId);
+        a.statusSince = ev.atMs;
+        a.lastActivityMs = Math.max(a.lastActivityMs, ev.atMs);
+        return;
+      case 'ask_answered':
+        if (a.openAsks.delete(ev.callId)) a.statusSince = ev.atMs;
+        a.lastActivityMs = Math.max(a.lastActivityMs, ev.atMs);
+        return;
+      case 'turn_started':
+        a.openTurn = ev.turnId;
+        a.statusSince = ev.atMs;
+        a.lastActivityMs = Math.max(a.lastActivityMs, ev.atMs);
+        return;
+      case 'turn_completed': {
+        if (a.openTurn === ev.turnId) a.openTurn = null;
+        a.statusSince = ev.atMs;
+        a.lastActivityMs = Math.max(a.lastActivityMs, ev.atMs);
+        // Codex declares the duration in the payload, and it is the same one
+        // the terminal prints as "worked for 1m 29s". Deriving it from the gap
+        // between two records would give a different and worse number.
+        if (ev.durationMs > 0) {
+          this.#ctx?.onEvents([
+            {
+              t: 'turn.end',
+              sessionId: a.meta.sessionId,
+              at: ev.atMs,
+              durationMs: ev.durationMs,
+              messageCount: 0,
+            },
+          ]);
+        }
+        return;
+      }
+      case 'item': {
+        a.lastActivityMs = Math.max(a.lastActivityMs, ev.atMs);
+        if (ev.itemType === 'UserMessage') a.currentTask = firstLineOf(ev.item);
+        if (ev.itemType === 'Reasoning' && ev.startedAtMs !== null) {
+          a.reasoningMs += Math.max(0, ev.atMs - ev.startedAtMs);
+        }
+        const events = this.#project(a, ev.itemType, ev.itemId, ev.atMs, ev.item);
+        if (events.length === 0) return;
+        if (this.#opts.devAssert) for (const e of events) assertSafe(e);
+        else for (const e of events) this.#opts.stats.redactionClamps += clampUnsafe(e);
+        this.#ctx?.onEvents(events);
+        return;
+      }
+    }
+  }
+
+  #sessions(now: number): LiveSession[] {
+    const out: LiveSession[] = [];
+    for (const a of this.#attached.values()) {
+      // Three distinct states, all derivable from the rollout:
+      //  - waiting: a question to the user is still unanswered
+      //  - busy:    turn open, `task_started` without `task_complete`
+      //  - idle:    turn closed, i.e. task finished
+      const waiting = a.openAsks.size > 0;
+      const busy = a.openTurn !== null || now - a.lastActivityMs < SETTLE_MS;
+      const status: SessionStatus = waiting ? 'waiting' : busy ? 'busy' : 'idle';
+      out.push({
+        sessionId: a.meta.sessionId,
+        provider: 'codex',
+        // The PID comes from an index that may be stale, and a stale PID is a
+        // PID that may meanwhile belong to another process: it only serves to
+        // find the terminal, and whoever uses it checks that there really is
+        // a `codex` on the other end before doing anything.
+        pid: this.#pids.get(a.meta.sessionId)?.pid ?? 0,
+        cwd: a.meta.cwd,
+        label: this.#names.get(a.meta.sessionId) ?? `codex-${a.meta.sessionId.slice(0, 6)}`,
+        title: this.#opts.titles ? a.currentTask : null,
+        status,
+        // Deduced from the files, not declared by Codex: the scene must say so.
+        statusConfidence: 'inferred',
+        waitingFor: waiting ? 'input' : null,
+        kind: 'interactive',
+        version: a.meta.cliVersion ?? '?',
+        model: a.model,
+        startedAt: a.meta.startedAtMs,
+        updatedAt: a.lastActivityMs,
+        statusSince: a.statusSince,
+        reasoningMs: a.reasoningMs,
+        contextPct: a.contextPct,
+      });
+    }
+    return out;
+  }
+
+  /** Projection: BUILT field by field, never a spread of raw data. */
+  #project(
+    a: Attached,
+    itemType: string,
+    itemId: string,
+    atMs: number,
+    item: Record<string, unknown>,
+  ): DeltaEvent[] {
+    const cat = CATEGORY[itemType];
+    if (!cat) return [];
+
+    const cwd = a.meta.cwd;
+    const sessionId = a.meta.sessionId;
+    const projectId = projectIdFor(cwd);
+    const out: DeltaEvent[] = [];
+    const id = `cx:${itemId}`;
+
+    out.push({
+      t: 'tool.start',
+      id,
+      sessionId,
+      agentId: null,
+      name: itemType,
+      cat,
+      at: atMs,
+      target: this.#targetOf(itemType, item, cwd),
+    });
+
+    // Codex writes the item only on completion: the duration comes from the
+    // payload instead of from the difference between two records.
+    const duration = item['duration'];
+    let durationMs: number | null = null;
+    if (typeof item['durationMs'] === 'number') durationMs = item['durationMs'];
+    else if (duration && typeof duration === 'object') {
+      const d = duration as Record<string, unknown>;
+      const secs = typeof d['secs'] === 'number' ? d['secs'] : 0;
+      const nanos = typeof d['nanos'] === 'number' ? d['nanos'] : 0;
+      durationMs = Math.round(secs * 1000 + nanos / 1e6);
+    }
+
+    const status = item['status'];
+    const exit = item['exit_code'] ?? item['exitCode'];
+    const ok = status !== 'failed' && exit !== 1 && exit !== '1';
+
+    out.push({
+      t: 'tool.end',
+      id,
+      sessionId,
+      at: atMs,
+      durationMs,
+      ok,
+      bytes: 0,
+      changed: 0,
+      orphan: false,
+      // Codex writes the item only on completion: when we see it, it is done.
+      asyncLaunch: false,
+      spawnedAgentId: null,
+    });
+
+    if (itemType === 'FileChange') {
+      const changes = item['changes'];
+      const list = Array.isArray(changes)
+        ? changes
+        : changes && typeof changes === 'object'
+          ? Object.values(changes as Record<string, unknown>)
+          : [];
+      for (const change of list.slice(0, 24)) {
+        const c = change as Record<string, unknown> | null;
+        const abs = c && typeof c['path'] === 'string' ? c['path'] : null;
+        if (!abs) continue;
+        const ref = this.#fileRef(abs, cwd);
+        if (ref.kind !== 'file' || ref.external) continue;
+        const diff = c && typeof c['diff'] === 'string' ? c['diff'] : '';
+        const kindType = (c?.['kind'] as Record<string, unknown> | undefined)?.['type'];
+        out.push({
+          t: 'file.touch',
+          projectId,
+          sessionId,
+          fileId: fileIdFor(projectId, ref.path),
+          path: ref.path,
+          ext: ref.ext,
+          dir: ref.dir,
+          op: kindType === 'add' ? 'write' : 'edit',
+          changed: diff ? diff.split('\n').length : 0,
+          at: atMs,
+          floor: -1,
+          col: -1,
+        });
+      }
+    }
+
+    return out;
+  }
+
+  #targetOf(itemType: string, item: Record<string, unknown>, cwd: string): TargetRef | null {
+    if (itemType === 'CommandExecution') {
+      if (!this.#opts.cmdNames) return null;
+      // `command` can be an array (["/bin/bash","-lc","..."]) or a string.
+      // In both cases ONLY the first executable token is taken, skipping the
+      // shell wrapper: the arguments can contain anything.
+      const raw = item['command'];
+      const text = Array.isArray(raw) ? raw.join(' ') : typeof raw === 'string' ? raw : '';
+      const inner = /-lc\s+"?(.*?)"?\s*$/s.exec(text)?.[1] ?? text;
+      const bin = (inner.trim().split(/\s+/)[0] ?? '').split('/').pop() ?? '';
+      return /^[a-z0-9][a-z0-9._-]{0,23}$/i.test(bin) ? { kind: 'cmd', bin: bin.toLowerCase() } : null;
+    }
+    if (itemType === 'ImageView') {
+      const p = typeof item['path'] === 'string' ? item['path'] : null;
+      return p ? this.#fileRef(p, cwd) : null;
+    }
+    // Extension (web search): the query is content, like WebFetch on the Claude side.
+    return null;
+  }
+
+  #fileRef(abs: string, cwd: string): TargetRef {
+    const clean = abs.startsWith('file://') ? abs.slice('file://'.length) : abs;
+    const ext = (path.extname(clean).slice(0, 12) || '').toLowerCase();
+    const rel = path.isAbsolute(clean) ? path.relative(cwd, clean) : clean;
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      return { kind: 'file', path: `<external>/*${ext}`, ext, dir: '<external>', external: true };
+    }
+    const shown = this.#opts.redactPaths ? redactRelPath(rel) : rel;
+    const i = shown.indexOf('/');
+    return { kind: 'file', path: shown, ext, dir: i < 0 ? '.' : shown.slice(0, i), external: false };
+  }
+}

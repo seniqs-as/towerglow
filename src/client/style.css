@@ -1,0 +1,2972 @@
+/* No @font-face, no remote resources: system stacks only. */
+:root {
+  /* Session STATE colours, independent of the tool.
+
+     The lightning bolt is WHITE: with no tint it is not confused with the
+     green of the check mark or the yellow of the alert, and it stays the
+     lightest of the three (L* 100 against 80 for the green). */
+  --state-busy: #ffffff;
+  --state-done: #4ee08a;
+  --state-wait: #ffd84d;
+  --bg: #05070c;
+  --edge: #39d0ff;
+  --text: #cfe8ff;
+  --dim: #6d8ba6;
+  --panel: rgba(6, 14, 24, 0.72);
+  --line: rgba(57, 208, 255, 0.22);
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.5 var(--mono);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+#stage, #city { display: block; width: 100vw; height: 100vh; }
+#stage[hidden], #city[hidden] { display: none; }
+/* The planet, the time of day and the orbit belong to the colony only. */
+body.view-city .hud__tip [data-colony-key],
+body.view-city .hud__tip [data-ceo-key] { display: none; }
+
+.hud {
+  position: fixed;
+  top: 0; left: 0;
+  padding: 14px 18px;
+  background: linear-gradient(180deg, var(--panel), transparent);
+  pointer-events: none;
+  user-select: none;
+}
+
+.hud__brand { display: flex; align-items: center; gap: 8px; }
+
+/* The plan stopped. Amber when only you can unblock it, quiet blue when it
+   waits on the reserve or a session of yours; the text is the server's. */
+.hud__alert {
+  display: block;
+  max-width: 340px;
+  margin: 8px 0 0;
+  padding: 5px 9px 5px 22px;
+  position: relative;
+  border: 1px solid rgba(224, 176, 80, 0.55);
+  border-radius: 3px;
+  background: rgba(40, 28, 6, 0.85);
+  color: #f0d9a0;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.hud__alert[hidden] { display: none; }
+.hud__alert::before {
+  content: '!';
+  position: absolute;
+  left: 8px;
+  top: 5px;
+  font-weight: 700;
+  color: #e0b050;
+}
+.hud__alert[data-level='you'] { animation: hud-alert-pulse 2.4s ease-in-out infinite; }
+.hud__alert[data-level='wait'] {
+  border-color: rgba(140, 190, 225, 0.35);
+  background: rgba(6, 14, 22, 0.85);
+  color: #b9d3e6;
+}
+.hud__alert[data-level='wait']::before { color: #8fd4ff; }
+@keyframes hud-alert-pulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(224, 176, 80, 0); }
+  50% { box-shadow: 0 0 10px rgba(224, 176, 80, 0.45); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hud__alert[data-level='you'] { animation: none; }
+}
+
+.hud__dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #55606b;
+  box-shadow: 0 0 6px currentColor;
+}
+.hud__dot[data-state="on"]      { background: #8ef6c4; color: #8ef6c4; }
+.hud__dot[data-state="connecting"] { background: #ffb254; color: #ffb254; }
+.hud__dot[data-state="off"]     { background: #ff4d6a; color: #ff4d6a; }
+
+.hud__title {
+  letter-spacing: 0.22em;
+  font-size: 11px;
+  color: var(--edge);
+  text-shadow: 0 0 10px rgba(57, 208, 255, 0.45);
+}
+
+.hud__stats {
+  display: flex;
+  gap: 20px;
+  margin: 12px 0 0;
+}
+.hud__stats > div { display: flex; flex-direction: column; gap: 1px; }
+.hud__stats dt {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.hud__stats dd {
+  margin: 0;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.empty {
+  position: fixed;
+  inset: auto 0 12% 0;
+  text-align: center;
+  pointer-events: none;
+  padding-inline: 16px;
+}
+.empty h1 { margin: 0 0 6px; font-size: 15px; font-weight: 500; color: var(--text); }
+.empty p  { margin: 0; font-size: 11px; color: var(--dim); }
+.empty code {
+  color: var(--edge);
+  background: rgba(57, 208, 255, 0.08);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+[hidden] { display: none !important; }
+
+/* Inside the ship the colony is not on screen, and neither is anything
+   pinned to it: its names, its badges, a session's card. */
+body.is-inside #labels,
+body.is-inside #badges,
+body.is-inside #card,
+body.is-inside .empty { display: none; }
+
+.inside-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px 8px;
+  align-items: baseline;
+  padding: 6px 12px;
+  border: 1px solid rgba(199, 125, 255, 0.35);
+  border-radius: 3px;
+  background: rgba(6, 12, 20, 0.82);
+  color: #b9cde0;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.inside-hint b { color: #fff; font-weight: 700; }
+.inside-hint span + b { margin-left: 10px; }
+
+/* Projected labels: DOM elements, not 3D text. */
+#labels {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  white-space: nowrap;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 2px;
+  transition: opacity 160ms linear;
+  will-change: transform, opacity;
+}
+
+@keyframes bolt-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* The map of the city: it has to read from across it, over lit windows.
+   Pale cyan on a see-through plate did not -- the text is near white now,
+   the plate nearly opaque, and the cyan stays in the border. The capitals
+   are in the text itself (`projectPlateText`); this rule only backs it up. */
+.label[data-kind="project"] {
+  color: #e8f7ff;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(3, 9, 17, 0.9);
+  border: 1px solid rgba(57, 208, 255, 0.5);
+  text-transform: uppercase;
+}
+
+.label[data-kind="commit"] {
+  color: #8ef6c4;
+  background: rgba(4, 20, 14, 0.74);
+  border: 1px solid rgba(142, 246, 196, 0.28);
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* No uppercase: a commit message is a sentence, not a label. */
+  text-transform: none;
+}
+
+/* The name of a window, only on mouse hover. The border has the window's
+   colour: it says which of the nearby lights is being read. */
+.window-tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  pointer-events: none;
+  white-space: nowrap;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: #eef4ff;
+  background: rgba(4, 10, 18, 0.9);
+  border: 1px solid var(--c, #8fd4ff);
+  border-left-width: 3px;
+  border-radius: 2px;
+  padding: 3px 7px;
+}
+
+.label[data-kind="hq"] {
+  color: #e0bcff;
+  background: rgba(16, 6, 24, 0.7);
+  border: 1px solid rgba(199, 125, 255, 0.35);
+  letter-spacing: 0.2em;
+}
+
+/* ─────────────────── badges on the buildings ─────────────────── */
+
+/* The container intercepts nothing: only the badges do, otherwise an
+   invisible full-screen panel would stop the camera from orbiting. */
+#badges {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* Only the state, and large: it is the one thing to read from afar. Which
+   tool it is, the colour already says -- of the building and of the symbol
+   itself -- and the legend explains it. */
+.badge {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(6, 10, 18, 0.82);
+  border: 1.5px solid var(--ring);
+  color: var(--ring);
+  cursor: pointer;
+  pointer-events: auto;
+  will-change: transform;
+  transition: box-shadow 140ms linear, background-color 140ms linear;
+}
+
+.badge:hover,
+.badge:focus-visible {
+  background: rgba(12, 20, 32, 0.95);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.09);
+  outline: none;
+}
+
+/* Two pieces of information, two colours, never mixed.
+   The CIRCLE says which tool: orange Claude, white Codex, like the
+   building below. The SYMBOL says the state, with a colour of its own that
+   does not depend on the tool -- so "working" reads the same for both,
+   and is never confused with "whose it is". */
+.badge[data-provider="claude"] { --ring: #ffb254; }
+.badge[data-provider="codex"] { --ring: #eef4ff; }
+
+/* The context: an arc AROUND the circle, the same colour as the tool. It
+   fills clockwise from the top, and when it is full the session compacts
+   or stops -- that is why, past ninety percent, it pulses: that is the
+   moment you need to know. With no data there is no arc. */
+.badge__ctx {
+  position: absolute;
+  inset: -8px;
+  width: 44px;
+  height: 44px;
+  transform: rotate(-90deg);
+  pointer-events: none;
+  display: none;
+  overflow: visible;
+}
+
+.badge[data-ctx] .badge__ctx { display: block; }
+
+.badge__ctx-track {
+  fill: none;
+  stroke: var(--ring);
+  stroke-opacity: 0.16;
+  stroke-width: 2.4;
+}
+
+.badge__ctx-fill {
+  fill: none;
+  stroke: var(--ring);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-dasharray: var(--ctx) 100;
+  transition: stroke-dasharray 400ms ease-out;
+}
+
+.badge[data-ctx="full"] .badge__ctx-fill { animation: ctx-full 1.1s ease-in-out infinite; }
+
+@keyframes ctx-full {
+  0%, 100% { stroke-opacity: 1; }
+  50% { stroke-opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badge[data-ctx="full"] .badge__ctx-fill { animation: none; }
+}
+
+.badge__bolt { color: var(--state-busy); }
+.badge__check { color: var(--state-done); }
+.badge__alert { color: var(--state-wait); }
+
+/* State inferred rather than declared: the border says so, as on the labels. */
+.badge[data-inferred="yes"] { border-style: dashed; }
+
+/* The click on a badge jumps to the terminal, an action that happens OUTSIDE
+   the page: its outcome flashes on the ring, or you would not know if
+   anything happened. */
+.badge[data-focus="ok"] { border-color: #8ef6c4; box-shadow: 0 0 0 3px rgba(142, 246, 196, 0.35); }
+.badge[data-focus="fail"] { border-color: #ff4d6a; box-shadow: 0 0 0 3px rgba(255, 77, 106, 0.35); }
+
+/* On its way: Terminal takes a couple of seconds to answer, and a still badge
+   read as a lost click. The ring breathes until the outcome replaces it. */
+.badge[data-focus="pending"] {
+  border-color: #8ef6c4;
+  animation: focus-pending 0.9s ease-in-out infinite;
+}
+
+@keyframes focus-pending {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(142, 246, 196, 0.15); }
+  50% { box-shadow: 0 0 0 6px rgba(142, 246, 196, 0.45); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badge[data-focus="pending"] { animation: none; box-shadow: 0 0 0 3px rgba(142, 246, 196, 0.3); }
+}
+
+/* One symbol at a time, chosen by the state: the nodes are not recreated
+   when the state changes, and so the badge does not flicker. */
+.badge__icon { display: none; }
+.badge[data-state="busy"] .badge__bolt,
+.badge[data-state="done"] .badge__check,
+.badge[data-state="waiting"] .badge__alert { display: block; }
+
+.badge__bolt { width: 12px; height: 18px; }
+.badge__check { width: 18px; height: 18px; }
+.badge__alert { width: 19px; height: 19px; }
+
+/* Working: the lightning bolt pulses at the same rhythm as before. */
+.badge[data-state="busy"] .badge__bolt {
+  animation: bolt-pulse 1.15s ease-in-out infinite;
+}
+
+/* Waiting for you: it is the only state in which someone needs to step in, so
+   it is the only one that also draws attention with a halo. The circle keeps
+   the tool's colour: the halo is yellow, like the symbol. */
+.badge[data-state="waiting"] {
+  animation: badge-wait 1.4s ease-in-out infinite;
+}
+
+@keyframes badge-wait {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 216, 77, 0.55); }
+  60% { box-shadow: 0 0 0 8px rgba(255, 216, 77, 0); }
+}
+
+/* Finished: the check mark stays, but without asking for attention. */
+.badge[data-state="done"] { opacity: 0.72; }
+.badge[data-state="done"]:hover { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .badge[data-state="busy"] .badge__bolt,
+  .badge[data-state="waiting"] { animation: none; }
+}
+
+/* The task text, only on mouse hover.
+   Above ALL the badges: it lives in the same container, and without a z-index
+   creation order wins -- the bubble is created first, so every badge that
+   arrived later was drawn over it, covering exactly the text you had asked
+   to read. */
+.badge-tip {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  left: 0;
+  max-width: 320px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  line-height: 1.35;
+  pointer-events: none;
+  background: rgba(4, 8, 14, 0.92);
+  border: 1px solid rgba(140, 190, 225, 0.3);
+  color: #dceaf7;
+  /* The task goes on the first line, the timer below. */
+  white-space: pre-line;
+}
+
+.badge-tip[data-provider="claude"] {
+  color: #ffb254;
+  border-color: rgba(255, 178, 84, 0.4);
+}
+
+/* The bubble hosts a button, so it must receive the mouse -- but only the
+   bubble, not the container, which stays transparent to clicks so as not to
+   steal dragging from the camera. */
+.badge-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.badge-tip__text { flex: 1 1 auto; min-width: 0; }
+
+/* Jump to the terminal: two angle brackets, the sign that means code
+   everywhere. It appears only when there really is a terminal to find. */
+.card__jump {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms linear, background-color 120ms linear;
+}
+
+.card__jump svg { width: 13px; height: 10px; }
+
+.card__jump:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* The outcome of the jump on the button itself: it is an action that happens
+   OUTSIDE the page, so without a sign here you would not know if anything
+   happened. */
+.card__jump[data-state="ok"] {
+  opacity: 1;
+  color: #8ef6c4;
+  border-color: #8ef6c4;
+}
+
+.card__jump[data-state="fail"] {
+  opacity: 1;
+  color: #ff4d6a;
+  border-color: #ff4d6a;
+}
+
+.card__jump[data-state="pending"] {
+  opacity: 1;
+  color: #8ef6c4;
+  animation: jump-pending 0.9s ease-in-out infinite;
+}
+
+@keyframes jump-pending {
+  0%, 100% { border-color: rgba(142, 246, 196, 0.25); }
+  50% { border-color: #8ef6c4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card__jump[data-state="pending"] { animation: none; border-color: #8ef6c4; }
+}
+
+.card__jump { margin-left: auto; margin-right: 8px; }
+
+/* ─────────────────── detail panel ─────────────────── */
+
+.card {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 288px;
+  padding: 10px 12px 12px;
+  border-radius: 4px;
+  background: rgba(5, 9, 15, 0.94);
+  border: 1px solid rgba(140, 190, 225, 0.26);
+  color: #cfe3f5;
+  font-size: 11px;
+  pointer-events: auto;
+  z-index: 4;
+  /* The panel rests at the bottom and grows upward: in a short window it
+     would spill past the top edge, and it is precisely the header -- with the
+     session name and the close button -- that would be the first thing to go. */
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.card[data-provider="claude"] { border-color: rgba(255, 178, 84, 0.36); }
+
+.card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.card__kicker {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: #8fd4ff;
+}
+
+.card[data-provider="claude"] .card__kicker { color: #ffb254; }
+
+.card__close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.card__close:hover { opacity: 1; }
+
+.card__what {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #eef4ff;
+}
+
+.card__wait {
+  margin: 0 0 8px;
+  padding: 4px 6px;
+  border-left: 2px solid #ffd166;
+  color: #ffd166;
+  line-height: 1.35;
+}
+
+/* The recap written by the session. Indented like the wait, but in a neutral
+   tone: that one is a request waiting for you, this one is an account. */
+.card__recap {
+  margin: 0 0 8px;
+  padding: 5px 8px;
+  border-left: 2px solid rgba(140, 190, 225, 0.45);
+  background: rgba(140, 190, 225, 0.06);
+}
+
+.card__recap-head {
+  margin: 0 0 3px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #7f9bb3;
+}
+
+.card__recap-text {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #dce9f6;
+}
+
+.card__rows {
+  margin: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.card__rows > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.card__rows dt {
+  color: #7f9bb3;
+  letter-spacing: 0.06em;
+}
+
+.card__rows dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* How it got there. Set apart from the data by a thin rule, not a big title:
+   it is the same panel carrying on, not a second card. */
+.card__trail {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(140, 190, 225, 0.16);
+}
+
+.card__trail-title {
+  margin: 0 0 5px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #7f9bb3;
+}
+
+/* Just under eight rows, then it scrolls: the panel rests at the bottom
+   right, and past this height it would grow off the screen. */
+.card__steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 3px;
+  max-height: 132px;
+  overflow-y: auto;
+  font-size: 10.5px;
+}
+
+.card__step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.3;
+}
+
+/* The same colour the call lit on the facade: the window seen a minute ago
+   and the row that tells its story must be recognisably the same
+   thing. */
+.card__step-dot { width: 6px; height: 6px; border-radius: 2px; flex: 0 0 auto; }
+
+.card__step-time {
+  flex: 0 0 auto;
+  color: #5f7a90;
+  font-variant-numeric: tabular-nums;
+}
+
+.card__step-what {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card__step-note {
+  flex: 0 0 auto;
+  color: #7f9bb3;
+  font-variant-numeric: tabular-nums;
+}
+
+.card__step-note[data-state="fail"] { color: #ff6b81; }
+
+/* ─────────────────── usage per tool ─────────────────── */
+
+/* Top right, on the opposite side from the counters: it is a figure you
+   consult, not one you watch, so it does not compete with the city for the
+   centre. */
+/* The quota is the figure that decides whether you can keep working today,
+   so it reads from afar: it is the only corner of the interface with a
+   larger type size than the counters. */
+/* The top-right corner: the quota, and the chevron that folds it. */
+.topright {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  /* The same inset and the same fade as .hud, so both corners sit on one
+     backdrop. The extra 28px on the right is room for the chevron. */
+  padding: 14px 46px 14px 18px;
+  background: linear-gradient(180deg, var(--panel), transparent);
+  pointer-events: none;
+}
+
+.spend {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+}
+
+.spend__rows { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+
+.spend__row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Name and plan paired and close together: they say the same thing. */
+.spend__id { display: flex; align-items: center; gap: 7px; }
+
+.spend__tool { opacity: 0.85; font-size: 11px; text-align: right; min-width: 56px; }
+
+/* The plan, when the tool declares it: it sits beside the name because it is
+   a property of the account, not a measurement. */
+.spend__plan {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.5;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  padding: 0 4px;
+}
+
+.spend__windows { display: flex; align-items: center; gap: 14px; }
+.spend__row[data-provider="claude"] { color: #ffb254; }
+.spend__row[data-provider="codex"] { color: #eef4ff; }
+
+/* A quota window: bar plus percentage. The bar is read at a glance, the
+   number when you stop to look at it.
+
+   It receives the mouse -- the container does not, so as not to steal
+   dragging from the camera -- because when the quota resets is written
+   nowhere: the bubble says it, and without this there would be no way to ask. */
+.spend__win { display: flex; align-items: center; gap: 6px; pointer-events: auto; cursor: help; }
+
+.spend__bar {
+  display: block;
+  width: 60px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.spend__fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: currentColor;
+  transition: width 400ms ease-out;
+}
+
+/* The percentage is the number that matters: it is the largest in the row. */
+.spend__pct {
+  font-size: 16px;
+  letter-spacing: 0.01em;
+  min-width: 44px;
+  text-align: right;
+}
+
+/* Which window: without this the number means nothing, so it reads as
+   clearly as the number. */
+.spend__winlabel { font-size: 12px; opacity: 0.85; min-width: 22px; }
+
+/* The model the limit belongs to, when the plan counts one separately. It has
+   the shape of the plan -- it is the same kind of thing, a property and not a
+   measurement -- and appears only when a window of its own really exists. */
+.spend__winmodel {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.5;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  padding: 0 4px;
+}
+
+/* Above the thresholds the colour stops following the tool and follows the
+   risk: it is the only moment this corner needs to draw attention. */
+.spend__win[data-level="warn"] { color: #ffd166; }
+.spend__win[data-level="high"] { color: #ff4d6a; }
+
+/* The tokens used: as readable as the rest, but without the percentage's
+   type size -- they say how much you spent, not how much you have left. */
+.spend__total { font-size: 13px; letter-spacing: 0.03em; opacity: 0.8; min-width: 52px; text-align: right; }
+
+/* ─────────────────── actions in the bubble ─────────────────── */
+
+.badge-tip__body { flex: 1 1 auto; min-width: 0; }
+
+.badge-tip__actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+}
+
+.act {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 120ms linear, background-color 120ms linear;
+}
+
+.act svg { width: 12px; height: 12px; }
+
+.act:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Hiding from view is the only action that changes the city: it announces itself. */
+.badge-tip__hide:hover { color: #ff8c9f; border-color: #ff8c9f; }
+.badge-tip__zoom svg { width: 13px; height: 13px; }
+
+/* The outcome of an action that happens OUTSIDE the page. */
+.badge-tip__folder[data-state="ok"] { opacity: 1; color: #8ef6c4; border-color: #8ef6c4; }
+.badge-tip__folder[data-state="fail"] { opacity: 1; color: #ff4d6a; border-color: #ff4d6a; }
+
+/* You rename where you read the name, not in a dialog somewhere else. */
+.badge-tip__input {
+  width: 100%;
+  padding: 1px 4px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.4);
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  /* The name you type is the one on the tower, which is in capitals. */
+  text-transform: uppercase;
+}
+
+.badge-tip__input:focus { outline: none; background: rgba(0, 0, 0, 0.65); }
+
+/* ─────────────────── project menu ─────────────────── */
+
+/* The project label receives the mouse: it is the only way to reach
+   projects that are OFF, which have no session badge to go through.
+   Only the label, not all of #labels, otherwise an invisible full-screen
+   panel would stop the city from rotating. */
+.label--interactive { pointer-events: auto; cursor: default; }
+.label[data-outcome="ok"] { border-color: #8ef6c4; color: #8ef6c4; }
+.label[data-outcome="fail"] { border-color: #ff4d6a; color: #ff4d6a; }
+
+/* Same reason as the bubble: above the badges, whatever the order.
+   Just the icons, beside the label and as tall as it: the name is already
+   there, the menu only adds what can be done with it. */
+.pmenu {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 2px;
+  background: rgba(4, 10, 18, 0.95);
+  border: 1px solid rgba(57, 208, 255, 0.34);
+  color: #8fd4ff;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  pointer-events: auto;
+  will-change: transform;
+}
+
+.pmenu__body { flex: 0 0 auto; }
+
+.pmenu__input {
+  display: block;
+  padding: 1px 4px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.5);
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  /* It lies over the nameplate: what you type reads as the plate will. */
+  text-transform: uppercase;
+}
+
+.pmenu__input:focus { outline: none; background: rgba(0, 0, 0, 0.7); }
+
+.pmenu__actions { flex: 0 0 auto; display: flex; gap: 3px; }
+
+.pmenu .act { width: 20px; height: 16px; }
+.pmenu .act svg { width: 11px; height: 11px; }
+
+/* Hiding from view is the only action that changes the city: it announces itself. */
+.pmenu__hide:hover { color: #ff8c9f; border-color: #ff8c9f; }
+
+/* The outcome of an action that happens OUTSIDE the page: without a sign here
+   you would not know whether something happened or the click got lost. */
+.pmenu__reveal[data-state="ok"] { opacity: 1; color: #8ef6c4; border-color: #8ef6c4; }
+.pmenu__reveal[data-state="fail"] { opacity: 1; color: #ff4d6a; border-color: #ff4d6a; }
+
+/* ─────────────────── HUD buttons ─────────────────── */
+
+/* Groups of glyphs -- the colony, the CEOs, the way back, the settings and
+   instructions -- told apart
+   by a wider gap rather than by a rule: a group whose buttons are all hidden
+   (the CEOs without --ceo) must leave no trace. */
+.hud__buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 10px; }
+.hud__group { display: flex; gap: 6px; }
+.hud__group:not(:has(> :not([hidden]))) { display: none; }
+
+/* A square glyph in the shell of the old text buttons. */
+.hud__icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0 6px;
+  border: 1px solid rgba(140, 190, 225, 0.3);
+  border-radius: 2px;
+  background: rgba(6, 14, 22, 0.8);
+  color: #9fc4dd;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.hud__icon svg { width: 14px; height: 14px; flex: none; }
+.hud__icon:hover,
+.hud__icon[data-on="yes"] { color: #dceaf7; border-color: rgba(140, 190, 225, 0.6); }
+.hud__icon:focus-visible { outline: 1px solid #8fd4ff; outline-offset: 1px; }
+
+/* What the glyph does, on hover or keyboard focus. Read from aria-label, so
+   the name a screen reader hears and the one on screen cannot drift apart.
+   Left-aligned under the button: the first glyph sits 18px from the edge and
+   a centred tip would run off the page. Transparent to the pointer, or it
+   would keep itself open and steal drags from the camera. */
+.hud__icon::after {
+  content: attr(aria-label);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 6;
+  white-space: nowrap;
+  padding: 3px 7px;
+  border: 1px solid rgba(140, 190, 225, 0.45);
+  border-radius: 2px;
+  background: rgba(4, 10, 18, 0.92);
+  color: #eef4ff;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease-out, visibility 0s linear 120ms;
+}
+.hud__icon:hover::after,
+.hud__icon:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 120ms ease-out 80ms, visibility 0s;
+}
+
+/* The instructions: the same tip as every other glyph, with the commands in
+   place of the name. Two columns, the key in bold and what it does beside it:
+   run together on one line the letters were lost in the rest of the text.
+   Also up while pinned by a click. */
+.hud__icon--help::after { content: none; }
+.hud__tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 3px 10px;
+  white-space: nowrap;
+  padding: 6px 9px 7px;
+  border: 1px solid rgba(140, 190, 225, 0.45);
+  border-radius: 2px;
+  background: rgba(4, 10, 18, 0.92);
+  color: #b9cde0;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease-out, visibility 0s linear 120ms;
+}
+.hud__tip-title {
+  grid-column: 1 / -1;
+  margin-bottom: 2px;
+  color: #eef4ff;
+}
+.hud__tip b { color: #fff; font-weight: 700; }
+.hud__icon--help:hover .hud__tip,
+.hud__icon--help:focus-visible .hud__tip,
+.hud__icon--help[data-on="yes"] .hud__tip {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 120ms ease-out 80ms, visibility 0s;
+}
+
+/* The disabled projects, one row each: a click brings back that one only.
+   Under the glyph like its tip, which it replaces while open. */
+.hud__restore { position: relative; }
+.hud__restore .hud__icon[data-on="yes"]::after { content: none; }
+.hud__restore-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  max-width: 280px;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 3px;
+  border: 1px solid rgba(140, 190, 225, 0.45);
+  border-radius: 2px;
+  background: rgba(4, 10, 18, 0.94);
+  pointer-events: auto;
+}
+.hud__restore-list[hidden] { display: none; }
+.hud__restore-row {
+  display: block;
+  margin: 0;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  color: #b9cde0;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.hud__restore-row:hover,
+.hud__restore-row:focus-visible { outline: none; background: rgba(140, 190, 225, 0.14); color: #eef4ff; }
+.hud__restore-row--all {
+  margin-top: 3px;
+  border-top: 1px solid rgba(140, 190, 225, 0.2);
+  border-radius: 0 0 2px 2px;
+  color: #8fb3cc;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+/* The chevron that folds a top corner: the shell of an HUD button, square. It
+   points up while there is something to fold and turns over once folded. */
+.fold {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin: 0 0 0 4px;
+  padding: 0;
+  border: 1px solid rgba(140, 190, 225, 0.3);
+  border-radius: 2px;
+  background: rgba(6, 14, 22, 0.8);
+  color: #9fc4dd;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.fold:hover { color: #dceaf7; border-color: rgba(140, 190, 225, 0.6); }
+.fold svg { width: 11px; height: 11px; }
+.fold[aria-expanded="false"] svg { transform: rotate(180deg); }
+.topright__fold { position: absolute; top: 14px; right: 18px; margin: 0; }
+
+/* ─────────────────── stats panel ─────────────────── */
+
+/* The veil blurs the city instead of covering it: the context of where you
+   are remains, but nothing moving behind competes with the numbers for
+   attention. */
+.stats {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  background: rgba(2, 5, 10, 0.55);
+  backdrop-filter: blur(14px) saturate(0.8);
+  -webkit-backdrop-filter: blur(14px) saturate(0.8);
+}
+
+.stats__panel {
+  width: min(920px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 5px;
+  background: rgba(6, 12, 20, 0.82);
+  border: 1px solid rgba(57, 208, 255, 0.22);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  color: #cfe3f5;
+  overflow: hidden;
+}
+
+.stats__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(140, 190, 225, 0.14);
+}
+
+.stats__head h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: #8fd4ff;
+}
+
+.stats__close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.stats__close:hover { opacity: 1; }
+
+.stats__body { overflow-y: auto; padding: 4px 18px 20px; }
+
+.stats__section { padding: 16px 0 4px; border-bottom: 1px solid rgba(140, 190, 225, 0.1); }
+.stats__section:last-child { border-bottom: none; }
+
+.stats__section h3 {
+  margin: 0 0 12px;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #7f9bb3;
+}
+
+.stats__note { display: block; font-size: 10px; color: #7f9bb3; margin-top: 8px; }
+
+/* Headline numbers: large, because they are the ones you look at first. */
+.stats__figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 14px 10px;
+}
+
+.stats__figure { display: flex; flex-direction: column; gap: 2px; }
+.stats__figure-label { font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: #7f9bb3; }
+.stats__figure-value { font-size: 22px; font-variant-numeric: tabular-nums; color: #eef4ff; }
+.stats__figure-note { font-size: 9px; color: #7f9bb3; }
+
+/* Quotas */
+.stats__quota {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 7px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats__quota-name { font-size: 11px; min-width: 92px; }
+.stats__quota-name[data-provider="claude"] { color: #ffb254; }
+.stats__quota-name[data-provider="codex"] { color: #eef4ff; }
+
+.stats__quota-plan {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  padding: 0 4px;
+  opacity: 0.6;
+}
+
+.stats__quota-win { display: flex; align-items: center; gap: 7px; }
+.stats__quota-label { font-size: 10px; opacity: 0.6; min-width: 20px; }
+.stats__quota-pct { font-size: 13px; min-width: 38px; }
+.stats__quota-reset { font-size: 9px; opacity: 0.5; }
+.stats__quota-win[data-level="warn"] { color: #ffd166; }
+.stats__quota-win[data-level="high"] { color: #ff4d6a; }
+.stats__quota-tokens { font-size: 10px; opacity: 0.55; margin-left: auto; }
+
+/* Rows with a bar: projects and sessions */
+.stats__rows { display: flex; flex-direction: column; gap: 7px; }
+
+/* The row grows in height instead of cutting: a statistic truncated halfway
+   is not a shorter statistic, it is a statistic that hides exactly the part
+   you were not already guessing. */
+.stats__row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1.2fr) minmax(56px, 0.8fr) 54px minmax(0, 2.4fr);
+  align-items: start;
+  gap: 4px 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats__row-name {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #eef4ff;
+  overflow-wrap: anywhere;
+}
+
+.stats__row-name[data-provider="claude"] { color: #ffb254; }
+.stats__row-name[data-provider="codex"] { color: #eef4ff; }
+
+.stats__row-value { font-size: 11px; line-height: 1.45; text-align: right; }
+
+.stats__row-meta {
+  font-size: 9px;
+  line-height: 1.6;
+  color: #7f9bb3;
+  overflow-wrap: anywhere;
+}
+
+/* Dark track and light fill: with two similar greys the bars all read as
+   full, which is the worst way to show a proportion -- it looks like data,
+   and it is only the container. */
+/* Aligned with the first line of text, now that rows can grow. */
+.stats__bar { margin-top: 6px; }
+
+.stats__bar,
+.stats__quota-win .stats__bar {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.stats__quota-win .stats__bar { width: 90px; margin-top: 0; }
+
+.stats__bar-fill {
+  display: block;
+  height: 100%;
+  background: #39d0ff;
+  box-shadow: 0 0 6px rgba(57, 208, 255, 0.5);
+}
+
+.stats__quota-win .stats__bar-fill { background: currentColor; box-shadow: none; }
+
+/* Breakdown by tool */
+.stats__mix { display: flex; align-items: center; gap: 26px; flex-wrap: wrap; }
+.stats__donut { width: 132px; height: 132px; flex: 0 0 auto; }
+
+.stats__legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 168px));
+  gap: 6px 18px;
+  flex: 0 1 auto;
+  justify-content: start;
+}
+
+.stats__legend-item { display: flex; align-items: center; gap: 7px; font-size: 10px; }
+.stats__legend-dot { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
+.stats__legend-name { flex: 1 1 auto; color: #cfe3f5; text-transform: capitalize; }
+.stats__legend-n { color: #7f9bb3; font-variant-numeric: tabular-nums; }
+
+/* ─────────────────── legend ─────────────────── */
+
+/* It opens BESIDE the scene, not over it: a legend is read by looking at the
+   explained symbol and the one on the roof together, and a modal that blurs
+   everything would hide exactly the second half. The blurred veil is its own. */
+/* Legend and forecast share the SAME frame: they open from the same corner,
+   one at a time, and two different frames would make them look like two
+   different interfaces for the same gesture. */
+.legend,
+.forecast {
+  position: fixed;
+  top: var(--hud-bottom, 168px);
+  left: 18px;
+  z-index: 9;
+  width: min(360px, calc(100vw - 36px));
+  max-height: calc(100vh - var(--hud-bottom, 168px) - 18px);
+  overflow-y: auto;
+  padding: 4px 16px 14px;
+  border-radius: 5px;
+  background: rgba(6, 12, 20, 0.84);
+  backdrop-filter: blur(12px) saturate(0.85);
+  -webkit-backdrop-filter: blur(12px) saturate(0.85);
+  border: 1px solid rgba(57, 208, 255, 0.22);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+  color: #cfe3f5;
+  font-size: 11px;
+}
+
+.legend__section { padding: 12px 0 4px; border-bottom: 1px solid rgba(140, 190, 225, 0.1); }
+.legend__section:last-child { border-bottom: none; }
+
+.legend__section h3 {
+  margin: 0 0 9px;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #7f9bb3;
+}
+
+.legend__row {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.legend__text { display: flex; flex-direction: column; gap: 1px; }
+.legend__name { color: #eef4ff; font-size: 11px; }
+.legend__meaning { color: #8aa6bd; font-size: 10px; line-height: 1.4; }
+
+.legend__note {
+  margin: 7px 0 4px;
+  color: #7f9bb3;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+/* Colour swatch: a small volume with a lit edge, like the buildings,
+   instead of a flat little square that looks like nothing. */
+.legend__swatch {
+  justify-self: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 2px;
+  border: 1.5px solid var(--c);
+  background: color-mix(in srgb, var(--c) 28%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--c) 45%, transparent);
+}
+
+/* The same symbol as on the helmet, in the same shell: orange circle as the
+   example tool, symbol in the state's colour. */
+.legend__symbol {
+  justify-self: center;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.5px solid #ffb254;
+}
+
+.legend__symbol svg { width: 14px; height: 14px; }
+.legend__symbol--busy { color: var(--state-busy); }
+.legend__symbol--done { color: var(--state-done); }
+.legend__symbol--wait { color: var(--state-wait); }
+
+/* The context arc in the legend: fixed at three quarters, to show how it
+   looks when it starts to get tight. */
+.legend__ctx { justify-self: center; width: 28px; height: 28px; }
+.legend__ctx svg { width: 28px; height: 28px; transform: rotate(-90deg); }
+.legend__ctx-track { fill: none; stroke: #ffb254; stroke-opacity: 0.18; stroke-width: 3; }
+.legend__ctx-fill {
+  fill: none;
+  stroke: #ffb254;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 75 100;
+}
+
+/* ─────────────────── usage forecast ─────────────────── */
+
+/* One block per tool: the quotas belong to the account, and two tools have
+   two periods that end on different days. */
+.forecast__tool { padding: 12px 0 6px; border-bottom: 1px solid rgba(140, 190, 225, 0.1); }
+.forecast__tool:last-of-type { border-bottom: none; }
+
+.forecast__tool h3 {
+  margin: 0 0 7px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #7f9bb3;
+}
+
+/* The name carries its tool's colour, the same as the bars and the
+   buildings: that is how you know who is being talked about without rereading. */
+.forecast__tool[data-provider="claude"] .forecast__name { color: #ffb254; }
+.forecast__tool[data-provider="codex"] .forecast__name { color: #eef4ff; }
+
+/* The plan has the shape it has beside the bars: it is the same thing. */
+.forecast__plan {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  opacity: 0.55;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  padding: 0 4px;
+}
+
+/* The verdict: the line you open the panel for, so the largest.
+   The colour follows the risk, like the bars above the thresholds. */
+.forecast__head {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.forecast__head[data-verdict="ok"] { color: var(--state-done); }
+.forecast__head[data-verdict="early"] { color: #ffd166; }
+.forecast__head[data-verdict="unknown"] { color: #8aa6bd; }
+
+/* A window: its span, how much of it you have used, what follows. The two
+   left columns are fixed because two windows are compared in columns. */
+.forecast__win {
+  display: grid;
+  grid-template-columns: 58px 38px 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  color: #8aa6bd;
+}
+
+.forecast__label { color: #cfe3f5; font-size: 11px; }
+.forecast__pct { font-variant-numeric: tabular-nums; text-align: right; font-size: 11px; }
+.forecast__text { display: flex; flex-direction: column; gap: 2px; }
+.forecast__line { color: #eef4ff; font-size: 11px; }
+.forecast__detail { font-size: 10px; line-height: 1.45; }
+
+/* Above the pace the window allows, the colour stops being neutral:
+   yellow if you overshoot slightly, red if you run dry mid-period. */
+.forecast__win[data-level="warn"] .forecast__line { color: #ffd166; }
+.forecast__win[data-level="high"] .forecast__line { color: #ff4d6a; }
+.forecast__win[data-level="warn"] .forecast__pct { color: #ffd166; }
+.forecast__win[data-level="high"] .forecast__pct { color: #ff4d6a; }
+
+/* How to read what is above, and since when: the same notes as the
+   legend, in the same tone. */
+.forecast__note {
+  margin: 7px 0 4px;
+  color: #7f9bb3;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+/* ── Board panel ────────────────────────────────────────────────────────────
+   Same frame as the other panels in this corner: it is a third panel, not a
+   new window. One difference only: here you WRITE, so it is wider and does
+   not close when you click inside it. */
+
+.boardroom {
+  position: fixed;
+  top: var(--hud-bottom, 168px);
+  left: 18px;
+  z-index: 9;
+  width: min(420px, calc(100vw - 36px));
+  max-height: calc(100vh - var(--hud-bottom, 168px) - 18px);
+  overflow-y: auto;
+  padding: 4px 16px 14px;
+  border-radius: 5px;
+  background: rgba(6, 12, 20, 0.9);
+  backdrop-filter: blur(12px) saturate(0.85);
+  -webkit-backdrop-filter: blur(12px) saturate(0.85);
+  border: 1px solid rgba(199, 125, 255, 0.28);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+  color: #cfe3f5;
+  font-size: 11px;
+}
+
+.boardroom__desk {
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(140, 190, 225, 0.1);
+}
+.boardroom__desk:last-child { border-bottom: none; }
+
+.boardroom__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+/* The provider's colour, as everywhere in the scene: the nameplate says who
+   is speaking without having to write it twice. */
+.boardroom__name {
+  color: var(--c);
+  letter-spacing: 0.14em;
+  font-size: 10px;
+}
+
+.boardroom__state {
+  color: #7f9ab0;
+  font-size: 10px;
+  text-align: right;
+}
+/* A CEO that is stopped or broken must be visible without reading: it is the
+   only case where you need to step in. */
+.boardroom__state[data-state='off'],
+.boardroom__state[data-state='error'] { color: #ff8f7a; }
+.boardroom__state[data-state='thinking'] { color: #b4ee4a; }
+
+.boardroom__answer {
+  min-height: 18px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  line-height: 1.55;
+  color: #d2e5f4;
+}
+/* Empty, it hides, BUT not while waiting: the waiting indicator lives on
+   this very element, and hiding it meant that for the whole length of the
+   answer -- measured: 27 seconds -- nothing appeared. Disabled buttons and
+   no sign of life read as "broken", not as "thinking". */
+.boardroom__answer:empty:not(.is-waiting) { display: none; }
+.boardroom__answer.is-waiting::after {
+  content: 'thinking…';
+  color: var(--c);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  animation: boardroom-wait 1.4s ease-in-out infinite;
+}
+@keyframes boardroom-wait {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.boardroom__row { display: flex; gap: 8px; align-items: flex-end; }
+
+.boardroom__input {
+  flex: 1 1 auto;
+  resize: vertical;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 4px;
+  border: 1px solid rgba(140, 190, 225, 0.2);
+  background: rgba(4, 9, 15, 0.85);
+  color: #d2e5f4;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.boardroom__input:focus {
+  outline: none;
+  border-color: var(--c);
+}
+.boardroom__input::placeholder { color: #4f6779; }
+
+.boardroom__send {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--c);
+  background: transparent;
+  color: var(--c);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.boardroom__send:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); }
+.boardroom__send:disabled { opacity: 0.35; cursor: default; }
+
+/* One line for the whole panel, because a meeting belongs to neither desk. */
+.boardroom__top {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 0 0;
+}
+.boardroom__both {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #7f9ab0;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.boardroom__both input {
+  margin: 0;
+  accent-color: #c77dff;
+}
+
+/* The three steps. Above the analyses because it is the first decision: it
+   picks the model, so it changes the bill before the question even does. */
+.boardroom__depths {
+  display: flex;
+  gap: 0;
+  margin-bottom: 8px;
+  border: 1px solid rgba(140, 190, 225, 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+  width: fit-content;
+}
+.boardroom__depth {
+  padding: 4px 11px;
+  border: none;
+  border-right: 1px solid rgba(140, 190, 225, 0.2);
+  background: transparent;
+  color: #7f9ab0;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.boardroom__depth:last-child { border-right: none; }
+.boardroom__depth:hover { color: #cfe3f5; }
+.boardroom__depth:disabled { opacity: 0.3; cursor: default; }
+.boardroom__depth[data-on='true'] {
+  background: color-mix(in srgb, var(--c) 22%, transparent);
+  color: var(--c);
+}
+
+/* The five analyses. Shortcuts, not the main way in: they stay small and sit
+   between the name and the answer, where a toolbar is expected. */
+.boardroom__picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 9px;
+}
+/* The armed analysis: it runs on the next send, so you can see which one. */
+.boardroom__pick[data-on="true"] {
+  background: rgba(199, 125, 255, 0.22);
+  border-color: rgba(199, 125, 255, 0.55);
+  color: #f3e9ff;
+}
+
+.boardroom__pick {
+  padding: 4px 8px;
+  border-radius: 3px;
+  border: 1px solid rgba(140, 190, 225, 0.22);
+  background: transparent;
+  color: #9fbcd2;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.boardroom__pick:hover:not(:disabled) {
+  border-color: var(--c);
+  color: var(--c);
+}
+.boardroom__pick:disabled { opacity: 0.3; cursor: default; }
+
+/* What the analysis was called, and what it cost. */
+.boardroom__report {
+  margin-bottom: 7px;
+  color: var(--c);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.boardroom__proposals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 9px;
+}
+.boardroom__proposals:empty { display: none; }
+
+/* Ordered by `order` and not by source order: the summary is the card, and it
+   has to sit under its own label whatever width the panel happens to have. */
+.boardroom__prop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 8px 9px;
+  border-radius: 4px;
+  border: 1px solid rgba(140, 190, 225, 0.16);
+  border-left: 2px solid var(--c);
+  background: rgba(255, 255, 255, 0.025);
+}
+.boardroom__prop-kind {
+  order: 0;
+  color: var(--c);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.boardroom__prop-status {
+  order: 1;
+  margin-left: auto;
+  color: #7f9ab0;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+.boardroom__prop-status[data-status='accepted'],
+.boardroom__prop-status[data-status='applied'] { color: #b4ee4a; }
+.boardroom__prop-status[data-status='rejected'] { color: #ff8f7a; }
+.boardroom__prop-text {
+  order: 2;
+  flex: 1 1 100%;
+  margin: 0;
+  line-height: 1.5;
+  color: #d2e5f4;
+}
+/* Where the worker would run, and what it will be told: read before a yes. */
+.boardroom__prop-project {
+  order: 2;
+  flex: 1 1 100%;
+  margin: 0;
+  color: #9fbcd2;
+  font-size: 10px;
+}
+.boardroom__prop-task {
+  order: 2;
+  flex: 1 1 100%;
+  margin: 0;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 6px 8px;
+  border-left: 2px solid rgba(140, 190, 225, 0.3);
+  background: rgba(255, 255, 255, 0.03);
+  color: #c4d6e6;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.boardroom__decide:disabled { opacity: 0.35; cursor: default; }
+
+/* Why it did not start. Without --execute that is the normal outcome, not a
+   fault: a warning colour, not an error colour. */
+.boardroom__prop-reason {
+  order: 3;
+  flex: 1 1 100%;
+  margin: 0;
+  color: #e0b050;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.boardroom__prop-actions {
+  order: 4;
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.boardroom__decide {
+  padding: 3px 9px;
+  border-radius: 3px;
+  border: 1px solid rgba(140, 190, 225, 0.25);
+  background: transparent;
+  color: #9fbcd2;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.boardroom__decide[data-accept='true']:hover { border-color: #b4ee4a; color: #b4ee4a; }
+.boardroom__decide[data-accept='false']:hover { border-color: #ff8f7a; color: #ff8f7a; }
+
+
+/* ─────────────────────────── Planning ───────────────────────────
+   The meeting and the plan. The frame of board, the width of reports: here
+   you both write and read, and a task row with its selects needs the room. */
+.planning {
+  position: fixed;
+  top: var(--hud-bottom, 168px);
+  left: 18px;
+  z-index: 9;
+  width: min(560px, calc(100vw - 36px));
+  max-height: calc(100vh - var(--hud-bottom, 168px) - 18px);
+  overflow-y: auto;
+  padding: 10px 16px 14px;
+  border-radius: 5px;
+  background: rgba(6, 12, 20, 0.92);
+  backdrop-filter: blur(12px) saturate(0.85);
+  -webkit-backdrop-filter: blur(12px) saturate(0.85);
+  border: 1px solid rgba(199, 125, 255, 0.28);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+  color: #cfe3f5;
+  font-size: 11px;
+}
+
+/* The mark beside the glyph: the plan still has work in it. Lime and
+   breathing while a task runs, a violet ring -- the panel's colour -- while
+   tasks wait: queued, failed, asking you, or paused. */
+.planning__todo {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.planning__todo[data-state="running"] {
+  background: #8ef6c4;
+  box-shadow: 0 0 6px #8ef6c4;
+  animation: planning-todo-breathe 1.6s ease-in-out infinite;
+}
+.planning__todo[data-state="pending"] {
+  box-sizing: border-box;
+  border: 1.5px solid #c77dff;
+}
+@keyframes planning-todo-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .planning__todo[data-state="running"] { animation: none; }
+}
+
+/* The number beside the glyph: questions waiting for you. */
+.planning__count {
+  min-width: 14px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #e0b050;
+  color: #0b1018;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+
+.planning__top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(140, 190, 225, 0.1);
+}
+.planning__title {
+  color: #c77dff;
+  letter-spacing: 0.14em;
+  font-size: 10px;
+}
+.planning__tabs { display: flex; gap: 2px; }
+.planning__tab {
+  padding: 3px 10px;
+  border: 1px solid rgba(140, 190, 225, 0.2);
+  border-radius: 3px;
+  background: transparent;
+  color: #7f9ab0;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.planning__tab[data-on='true'] { color: #eef4ff; border-color: rgba(199, 125, 255, 0.6); }
+.planning__chip {
+  margin-left: auto;
+  color: #7f9ab0;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.planning__chip[data-status='approved'] { color: #b4ee4a; }
+.planning__chip[data-status='paused'] { color: #e0b050; }
+.planning__chip[data-status='proposed'] { color: #8fd4ff; }
+
+.planning__seat {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0 4px;
+  font-size: 10px;
+}
+.planning__seat-label { color: #7f9ab0; letter-spacing: 0.1em; }
+.planning__chairs { display: inline-flex; border: 1px solid rgba(140, 190, 225, 0.2); border-radius: 3px; overflow: hidden; }
+.planning__chair {
+  padding: 3px 10px;
+  border: none;
+  border-right: 1px solid rgba(140, 190, 225, 0.2);
+  background: transparent;
+  color: #7f9ab0;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.planning__chair:last-child { border-right: none; }
+.planning__chair:hover:not(:disabled) { color: var(--c); }
+/* The seat taken: filled with the fleet's colour, dark text on top. */
+.planning__chair[data-on='true'] { background: var(--c); color: #0b1018; font-weight: 700; }
+.planning__chair:disabled { cursor: default; }
+.planning__chair:disabled:not([data-on='true']) { opacity: 0.45; }
+
+.planning__depths { display: inline-flex; margin: 0 0 8px; border: 1px solid rgba(140, 190, 225, 0.2); border-radius: 3px; }
+.planning__depth {
+  padding: 3px 9px;
+  border: none;
+  border-right: 1px solid rgba(140, 190, 225, 0.2);
+  background: transparent;
+  color: #7f9ab0;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.planning__depth:last-child { border-right: none; }
+.planning__depth[data-on='true'] { color: #eef4ff; background: rgba(199, 125, 255, 0.18); }
+
+.planning__minutes {
+  max-height: min(420px, 45vh);
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.planning__minutes:empty { display: none; }
+.planning__minute {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(140, 190, 225, 0.06);
+}
+.planning__minute > p { margin: 0; white-space: pre-wrap; line-height: 1.5; color: #d2e5f4; }
+.planning__minute > .md { line-height: 1.5; color: #d2e5f4; }
+.planning__minute[data-role='system'] > p { color: #e0b050; font-size: 10px; }
+.planning__who { color: #7f9ab0; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; padding-top: 2px; }
+
+.planning__answer {
+  min-height: 18px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  line-height: 1.55;
+  color: #d2e5f4;
+}
+.planning__answer:empty:not(.is-waiting) { display: none; }
+.planning__answer.is-waiting::after {
+  content: 'thinking…';
+  color: #c77dff;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  animation: boardroom-wait 1.4s ease-in-out infinite;
+}
+
+.planning__questions:empty { display: none; }
+.planning__q {
+  margin-bottom: 6px;
+  padding: 6px 9px;
+  border-radius: 4px;
+  border: 1px solid rgba(140, 190, 225, 0.16);
+  border-left: 2px solid #e0b050;
+  background: rgba(255, 255, 255, 0.025);
+}
+.planning__q[data-answered='true'] { border-left-color: #b4ee4a; }
+.planning__q[data-answered='true'][data-seen='false'] { border-left-color: #e0b050; }
+.planning__qhint { display: block; margin-top: 4px; color: #e0b050; font-size: 10px; }
+.planning__q > .md { margin: 0 0 5px; line-height: 1.5; }
+/* An answer is paragraphs: as wide as the panel, as tall as its text (the
+   script grows it up to 40% of the window, then it scrolls). */
+.planning__qinput {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 64px;
+  max-height: 40vh;
+  resize: vertical;
+  overflow-y: auto;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(140, 190, 225, 0.2);
+  background: rgba(4, 9, 15, 0.85);
+  color: #d2e5f4;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.planning__qbar { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+.planning__qinput:focus { outline: none; border-color: #c77dff; }
+
+.planning__files:empty { display: none; }
+.planning__file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  color: #9fbcd2;
+  font-size: 10px;
+}
+.planning__x { width: 18px; height: 18px; padding: 0; border: none; background: transparent; color: #7f9ab0; cursor: pointer; }
+.planning__x svg { width: 11px; height: 11px; }
+.planning__x:hover { color: #ff8f7a; }
+/* Not yet with the chair: it goes with your next message. */
+.planning__file span[data-sent='false'] { color: #e0b050; }
+
+.planning__row { display: flex; gap: 8px; align-items: flex-end; margin-top: 6px; }
+/* The message box takes the whole width; the script grows it with the text
+   up to half the window, and past that it scrolls. */
+.planning__compose { margin-top: 6px; }
+.planning__bar { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.planning__meter { flex: 1 1 auto; min-width: 0; color: #4f6779; font-size: 10px; }
+.planning__meter[data-state='near'] { color: #e0b050; }
+.planning__meter[data-state='over'] { color: #ff8f7a; }
+.planning__restart[data-armed='true'] { border-color: #ff8f7a; color: #ff8f7a; }
+
+/* The chair is answering. Disabled and dimmed, the button read as broken
+   rather than busy: it is the one state that must be seen from across the
+   panel, so it is filled, it breathes, and the dots write themselves. */
+.planning__btn--main[data-busy='true'],
+.planning__btn--main[data-busy='true']:disabled {
+  opacity: 1;
+  color: #0b1018;
+  background: #c77dff;
+  border-color: #c77dff;
+  font-weight: 700;
+  cursor: progress;
+  animation: planning-busy 1.6s ease-in-out infinite;
+}
+.planning__btn--main[data-busy='true']::after {
+  content: '...';
+  display: inline-block;
+  width: 1.1em;
+  text-align: left;
+  animation: planning-dots 1.2s steps(4, jump-none) infinite;
+}
+.planning__meter[data-state='busy'] { color: #c77dff; font-weight: 600; letter-spacing: 0.04em; }
+.planning__meter[data-state='busy']::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #c77dff;
+  vertical-align: middle;
+  animation: planning-dot 1.2s ease-in-out infinite;
+}
+@keyframes planning-busy {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(199, 125, 255, 0.6); }
+  50% { box-shadow: 0 0 0 7px rgba(199, 125, 255, 0); }
+}
+@keyframes planning-dots {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@keyframes planning-dot {
+  0%, 100% { transform: scale(0.6); opacity: 0.45; }
+  50% { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .planning__btn--main[data-busy='true'],
+  .planning__btn--main[data-busy='true']::after,
+  .planning__meter[data-state='busy']::before { animation: none; }
+}
+.planning__input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+  min-height: 120px;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 7px 9px;
+  border-radius: 4px;
+  border: 1px solid rgba(140, 190, 225, 0.2);
+  background: rgba(4, 9, 15, 0.85);
+  color: #d2e5f4;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.planning__input:focus { outline: none; border-color: #c77dff; }
+.planning__input::placeholder { color: #4f6779; }
+
+.planning__btn {
+  padding: 6px 11px;
+  border-radius: 4px;
+  border: 1px solid rgba(140, 190, 225, 0.25);
+  background: transparent;
+  color: #9fbcd2;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.planning__btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); color: #dceaf7; }
+.planning__btn:disabled { opacity: 0.35; cursor: default; }
+.planning__btn--main { border-color: #c77dff; color: #c77dff; }
+.planning__btn--quiet { border-color: transparent; color: #7f9ab0; }
+
+.planning__foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.planning__note { color: #e0b050; font-size: 10px; line-height: 1.4; }
+.planning__note:empty { display: none; }
+
+/* The plan view. */
+.planning__settings { padding: 10px 0 6px; border-bottom: 1px solid rgba(140, 190, 225, 0.1); }
+.planning__reserve { display: flex; align-items: center; gap: 12px; padding: 3px 0; }
+.planning__rname { width: 104px; color: var(--c); font-size: 10px; letter-spacing: 0.08em; white-space: nowrap; }
+.planning__slider { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; color: #9fbcd2; }
+.planning__slider input { width: 110px; accent-color: var(--c); }
+.planning__slider b { min-width: 30px; color: #dceaf7; font-weight: 500; }
+.planning__misc { display: flex; gap: 18px; padding-top: 6px; font-size: 10px; color: #9fbcd2; }
+.planning__field { display: inline-flex; align-items: center; gap: 6px; }
+.planning__field input[type='number'] {
+  width: 44px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  border: 1px solid rgba(140, 190, 225, 0.2);
+  background: rgba(4, 9, 15, 0.85);
+  color: #d2e5f4;
+  font: inherit;
+  font-size: 11px;
+}
+
+.planning__empty { color: #7f9ab0; padding: 12px 0; }
+.planning__project { padding: 10px 0; border-bottom: 1px solid rgba(140, 190, 225, 0.1); }
+/* Wraps: "push to main" and "no git versioning for this project" do not fit beside a long name. */
+.planning__phead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+.planning__rank {
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: rgba(199, 125, 255, 0.2);
+  color: #eef4ff;
+  font-size: 10px;
+  line-height: 18px;
+  text-align: center;
+}
+.planning__pname { color: #dceaf7; letter-spacing: 0.06em; }
+.planning__moves { display: inline-flex; gap: 2px; }
+.planning__move {
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(140, 190, 225, 0.2);
+  border-radius: 3px;
+  background: transparent;
+  color: #9fbcd2;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.planning__move:disabled { opacity: 0.25; cursor: default; }
+.planning__git { display: inline-flex; gap: 10px; margin-left: auto; font-size: 10px; color: #9fbcd2; }
+.planning__git label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.planning__git input { margin: 0; accent-color: #c77dff; }
+
+.planning__tasks { list-style: none; margin: 0; padding: 0; }
+.planning__task {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 6px 9px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  border: 1px solid rgba(140, 190, 225, 0.12);
+  border-left: 2px solid rgba(140, 190, 225, 0.3);
+  background: rgba(255, 255, 255, 0.02);
+}
+.planning__task[data-status='running'] { border-left-color: #b4ee4a; }
+.planning__task[data-status='done'] { border-left-color: #b4ee4a; opacity: 0.75; }
+.planning__task[data-status='failed'] { border-left-color: #ff8f7a; }
+.planning__task[data-status='question'] { border-left-color: #e0b050; }
+.planning__task[data-status='skipped'] { opacity: 0.45; }
+.planning__tstate { color: #7f9ab0; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; min-width: 52px; }
+.planning__task[data-status='question'] .planning__tstate { color: #e0b050; }
+.planning__task[data-status='failed'] .planning__tstate { color: #ff8f7a; }
+.planning__ttitle { flex: 1 1 auto; color: #d2e5f4; line-height: 1.4; }
+.planning__picks { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.planning__select {
+  padding: 2px 4px;
+  border-radius: 3px;
+  border: 1px solid rgba(140, 190, 225, 0.2);
+  background: rgba(4, 9, 15, 0.85);
+  color: #d2e5f4;
+  font: inherit;
+  font-size: 10px;
+}
+.planning__size, .planning__tlabel { color: #7f9ab0; font-size: 10px; }
+.planning__tdid { flex: 1 1 100%; margin: 0; color: #b4ee4a; font-size: 10px; line-height: 1.45; }
+.planning__tbrief {
+  flex: 1 1 100%;
+  margin: 2px 0 0;
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 5px 8px;
+  border-left: 2px solid rgba(140, 190, 225, 0.25);
+  background: rgba(255, 255, 255, 0.03);
+  color: #b8cbdc;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.planning__treason { flex: 1 1 100%; margin: 0; color: #e0b050; font-size: 10px; line-height: 1.45; }
+.planning__tq { flex: 1 1 100%; display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.planning__tq > .md { line-height: 1.5; color: #f0d9a0; }
+.planning__tq .planning__btn { align-self: flex-end; }
+.planning__tneeds { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.planning__tneeds code,
+.planning__cmd code {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(140, 190, 225, 0.1);
+  color: #d2e5f4;
+  font-size: 10px;
+}
+.planning__tneeds .planning__btn { margin-left: auto; }
+
+/* What a worker may run to test the project: chips, a cross, a field. */
+.planning__cmds { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 2px 0 6px; font-size: 10px; }
+.planning__cmdslabel { color: #7f9ab0; letter-spacing: 0.06em; cursor: help; }
+.planning__cmd { display: inline-flex; align-items: center; gap: 2px; }
+.planning__cmdx {
+  padding: 0 3px;
+  border: none;
+  background: transparent;
+  color: #7f9ab0;
+  font: inherit;
+  cursor: pointer;
+}
+.planning__cmdx:hover { color: #ff8f7a; }
+.planning__cmdnone { color: #7f9ab0; font-style: italic; }
+.planning__cmdadd {
+  flex: 0 1 190px;
+  min-width: 120px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  border: 1px solid rgba(140, 190, 225, 0.2);
+  background: rgba(4, 9, 15, 0.85);
+  color: #d2e5f4;
+  font: inherit;
+  font-size: 10px;
+}
+.planning__tacts { display: inline-flex; gap: 4px; margin-left: auto; }
+
+.planning__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 0 4px; }
+.planning__why { color: #7f9ab0; font-size: 10px; }
+.planning__nogit { color: #e0b050; font-size: 10px; }
+/* What happens next: after the answers, the way to the plan. */
+.planning__nextstep {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 8px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(180, 238, 74, 0.35);
+  background: rgba(180, 238, 74, 0.07);
+  color: #d2e5f4;
+}
+.planning__link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #b4ee4a;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.planning__link:hover { color: #eef4ff; }
+/* Before the yes: sessions of yours that would hold a project. */
+.planning__active {
+  flex: 1 1 100%;
+  margin: 0 0 6px;
+  padding: 7px 9px;
+  border-radius: 4px;
+  border: 1px solid rgba(224, 176, 80, 0.4);
+  background: rgba(224, 176, 80, 0.08);
+  color: #e0b050;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.planning__pactive { color: #e0b050; font-size: 10px; }
+.planning__why[data-ready='true'] { color: #b4ee4a; }
+.planning__why[data-blocked='true'] { color: #ff8f7a; }
+.planning__next { margin: 4px 0 0; color: #7f9ab0; font-size: 10px; }
+.planning__next[data-stall='you'] { color: #e0b050; }
+.planning__next[data-stall='wait'] { color: #8fd4ff; }
+
+/* ─────────────────────────── Reports ───────────────────────────
+   How it went. Same frame as board -- it is the same corner of the screen
+   and the same subject matter -- but the space goes to the TEXT: here you do
+   not write, you read, and a four-thousand-character answer needs room. */
+.reports {
+  position: fixed;
+  top: var(--hud-bottom, 168px);
+  left: 18px;
+  z-index: 9;
+  width: min(520px, calc(100vw - 36px));
+  max-height: calc(100vh - var(--hud-bottom, 168px) - 18px);
+  overflow-y: auto;
+  padding: 12px 16px 14px;
+  border-radius: 5px;
+  background: rgba(6, 12, 20, 0.92);
+  backdrop-filter: blur(12px) saturate(0.85);
+  -webkit-backdrop-filter: blur(12px) saturate(0.85);
+  border: 1px solid rgba(199, 125, 255, 0.28);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+  color: #cfe3f5;
+  font-size: 11px;
+}
+
+.reports__empty {
+  margin: 6px 0;
+  color: #6d8699;
+  line-height: 1.5;
+}
+
+.reports__list { display: flex; flex-direction: column; }
+
+/* Start over, in Board and Reports: Planning's quiet button, red once armed. */
+.boardroom__foot,
+.reports__foot { display: flex; justify-content: flex-end; margin-top: 8px; }
+.boardroom__foot[hidden],
+.reports__foot[hidden] { display: none; }
+.boardroom__restart,
+.reports__restart {
+  padding: 6px 11px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #7f9ab0;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.boardroom__restart:hover,
+.reports__restart:hover { background: rgba(255, 255, 255, 0.06); color: #dceaf7; }
+.boardroom__restart[data-armed='true'],
+.reports__restart[data-armed='true'] { border-color: #ff8f7a; color: #ff8f7a; }
+
+.reports__row {
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(140, 190, 225, 0.1);
+}
+.reports__row:last-child { border-bottom: none; }
+
+.reports__head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.reports__head:disabled { cursor: default; }
+
+/* The line above: who, where, what it cost. Small and muted, because it is
+   read only when needed -- the title is the thing you opened it for. */
+.reports__meta {
+  color: #6d8699;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.reports__row[data-state='failed'] .reports__meta { color: #ff8f7a; }
+
+.reports__title {
+  color: var(--c, #cfe3f5);
+  line-height: 1.45;
+}
+.reports__row[data-state='running'] .reports__title { color: #7f9ab0; }
+
+/* What was done, under what was asked: more muted than the title, because
+   it is read afterwards, but on the same reading line -- the difference
+   between the two is the information. */
+.reports__did {
+  color: #8fb0c6;
+  font-size: 11px;
+  line-height: 1.45;
+}
+/* A premise that does not hold is visible without opening anything, like an objection. */
+.reports__row[data-unfounded='yes'] .reports__did { color: #ffb3a3; }
+.reports__row[data-unfounded='yes'] .reports__meta { color: #ff8f7a; }
+
+/* The little triangle that says "this opens": on the title and not on a
+   separate button, because the whole row is the target. */
+.reports__head:not(:disabled) .reports__meta::before {
+  content: '▸ ';
+  color: #4f6779;
+}
+.reports__row[data-open='yes'] .reports__head .reports__meta::before { content: '▾ '; }
+
+/* The outcome, drawn from the model's Markdown (`ui/markdown.ts`). Its code
+   blocks wrap too: a horizontal scrollbar on text meant to be read is torture. */
+.reports__body {
+  margin: 8px 0 0;
+  padding: 9px 11px;
+  max-height: 46vh;
+  overflow-y: auto;
+  border-left: 2px solid rgba(140, 190, 225, 0.2);
+  background: rgba(255, 255, 255, 0.02);
+  color: #b9d0e2;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+/* The two controls, in plain sight under the title and not inside the open row.
+   Before, the only hint was a little triangle in front of the meta line: you had
+   to know that clicking "the session OBJECTED" opened something. A box with a
+   border and a verb visibly asks to be clicked. */
+.reports__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 7px 0 0;
+}
+
+.reports__tab {
+  padding: 2px 9px;
+  border: 1px solid rgba(140, 190, 225, 0.25);
+  border-radius: 3px;
+  background: transparent;
+  color: #8fb0c6;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.reports__tab:hover {
+  border-color: rgba(140, 190, 225, 0.55);
+  color: #d6e8f6;
+}
+/* The same little triangle as the row: two things that open, open the same way. */
+.reports__tab::before { content: '▸ '; }
+.reports__tab[data-open='yes']::before { content: '▾ '; }
+.reports__tab[data-open='yes'] {
+  border-color: rgba(140, 190, 225, 0.5);
+  background: rgba(140, 190, 225, 0.08);
+  color: #d6e8f6;
+}
+
+/* The log and the documents: they open windows, not boxes, so no triangle. */
+.reports__acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+.reports__tab--act { text-transform: none; letter-spacing: 0.02em; }
+.reports__tab--act::before { content: ''; }
+/* What came of the click, for a moment, on the button you pressed. */
+.reports__tab[data-state='ok'],
+.planning__btn[data-state='ok'] { border-color: rgba(180, 238, 74, 0.6); color: #b4ee4a; }
+.reports__tab[data-state='fail'],
+.planning__btn[data-state='fail'] { border-color: rgba(255, 143, 122, 0.6); color: #ff8f7a; }
+
+/* The review from whoever works there, under the outcome and not beside it: it
+   is read afterwards, and it is the second half of the same answer. */
+.reports__verdict { border-left-color: rgba(180, 238, 74, 0.35); }
+/* An objection is the one thing the CEO could not have known: it shows, and it
+   shows on the control that opens it -- the only place you look before clicking. */
+.reports__row[data-objected='yes'] .reports__verdict { border-left-color: #ff8f7a; }
+.reports__row[data-objected='yes'] .reports__tab--verdict {
+  border-color: rgba(255, 143, 122, 0.5);
+  color: #ff8f7a;
+}
+.reports__row[data-objected='yes'] .reports__tab--verdict:hover {
+  border-color: #ff8f7a;
+  color: #ffb3a3;
+}
+
+/* ─────────────────────────── Effect ─────────────────────────── */
+/* How the PROJECT went after an accepted job. A modal like Statistics
+   because the content is tabular and wide, not a list of rows that
+   open: here two columns are compared, and two columns want space. */
+
+.effect {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  background: rgba(2, 5, 10, 0.55);
+  backdrop-filter: blur(14px) saturate(0.8);
+  -webkit-backdrop-filter: blur(14px) saturate(0.8);
+}
+
+.effect__panel {
+  width: min(760px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 5px;
+  background: rgba(6, 12, 20, 0.82);
+  border: 1px solid rgba(199, 125, 255, 0.28);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  color: #cfe3f5;
+  overflow: hidden;
+}
+
+.effect__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(199, 125, 255, 0.18);
+}
+
+.effect__head h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #e6d6ff;
+}
+
+.effect__close {
+  background: none;
+  border: none;
+  color: #cfe3f5;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+  padding: 0 4px;
+}
+.effect__close:hover { opacity: 1; }
+
+.effect__body { overflow-y: auto; padding: 4px 18px 20px; }
+
+.effect__empty {
+  padding: 28px 4px;
+  font-size: 11px;
+  color: #7f9bb3;
+  line-height: 1.6;
+}
+
+.effect__card {
+  padding: 16px 0 14px;
+  border-bottom: 1px solid rgba(140, 190, 225, 0.1);
+}
+.effect__card:last-child { border-bottom: none; }
+
+.effect__card-head { display: flex; align-items: center; gap: 8px; }
+
+.effect__dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+
+.effect__meta {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7f9bb3;
+}
+
+.effect__summary {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #eef4ff;
+  line-height: 1.45;
+}
+
+.effect__did {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: #9fb8cc;
+  line-height: 1.45;
+}
+
+.effect__metrics { margin: 12px 0 8px; display: flex; flex-direction: column; gap: 3px; }
+
+.effect__metric {
+  display: grid;
+  grid-template-columns: 1fr 64px 12px 64px auto;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 0;
+}
+
+.effect__metric-label { color: #9fb8cc; }
+.effect__metric-from { color: #7f9bb3; }
+.effect__metric-arrow { color: #55708a; }
+.effect__metric-to { color: #eef4ff; }
+.effect__metric-change { min-width: 48px; text-align: right; color: #7f9bb3; }
+
+/* The tone only speaks where a direction EXISTS. `output` and `calls` stay grey
+   even when they move a lot: colouring them would be inventing a judgement. */
+.effect__metric[data-tone="better"] .effect__metric-change { color: #6ee7a8; }
+.effect__metric[data-tone="worse"] .effect__metric-change { color: #ff8f6b; }
+
+/* What stands in for a number is never a dash: a dash reads as a zero,
+   "2 more after" says the measurement is on its way. */
+.effect__metric-wait {
+  min-width: 96px;
+  text-align: right;
+  font-size: 10px;
+  color: #6b8299;
+  font-style: italic;
+}
+
+.effect__note { display: block; font-size: 10px; color: #7f9bb3; margin-top: 6px; }
+
+.effect__verdict {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: rgba(199, 125, 255, 0.07);
+  border-left: 2px solid rgba(199, 125, 255, 0.4);
+}
+
+.effect__verdict[data-attributed="false"] { border-left-color: rgba(255, 143, 107, 0.5); }
+
+.effect__verdict-head {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7f9bb3;
+}
+
+.effect__verdict-why {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #eef4ff;
+  line-height: 1.5;
+}
+
+.effect__ask {
+  margin-top: 10px;
+  background: rgba(199, 125, 255, 0.1);
+  border: 1px solid rgba(199, 125, 255, 0.3);
+  border-radius: 3px;
+  color: #e6d6ff;
+  font-size: 10px;
+  font-family: inherit;
+  letter-spacing: 0.04em;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.effect__ask:hover { background: rgba(199, 125, 255, 0.18); }
+
+.effect__ask:disabled {
+  cursor: default;
+  opacity: 0.6;
+  border-style: dashed;
+}
+
+/* The answer comes out where you pressed, not in the other panel. */
+.effect__answer {
+  margin-top: 8px;
+  padding: 9px 11px;
+  max-height: 220px;
+  overflow-y: auto;
+  border-radius: 4px;
+  background: rgba(10, 18, 28, 0.5);
+  border-left: 2px solid rgba(199, 125, 255, 0.25);
+  color: #cfe0f0;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.effect__answer.is-waiting { color: #7f9bb3; font-style: italic; }
+
+.effect__card[data-state="void"] .effect__summary { color: #9fb8cc; }
+
+/* ───────────────────────── settings ─────────────────────────
+   The settings panel: same frame as the legend, because it opens from the
+   same corner for the same reason -- you watch the scene while you move a
+   slider. The controls come from Bot Crossing, brought over to our
+   palette. */
+.settings {
+  position: fixed;
+  top: var(--hud-bottom, 168px);
+  left: 18px;
+  z-index: 9;
+  width: min(340px, calc(100vw - 36px));
+  max-height: calc(100vh - var(--hud-bottom, 168px) - 18px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 16px 14px;
+  border-radius: 5px;
+  background: rgba(6, 12, 20, 0.84);
+  backdrop-filter: blur(12px) saturate(0.85);
+  -webkit-backdrop-filter: blur(12px) saturate(0.85);
+  border: 1px solid rgba(57, 208, 255, 0.22);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+  color: #cfe3f5;
+  font-size: 11px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+.settings__group { padding: 12px 0 6px; border-bottom: 1px solid rgba(140, 190, 225, 0.1); }
+.settings__group:last-child { border-bottom: none; }
+
+.settings__group h3 {
+  margin: 0 0 9px;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #7f9bb3;
+}
+
+.settings__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+  padding: 3px 0;
+}
+
+.settings__label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.settings__name { color: #eef4ff; font-size: 11px; }
+.settings__hint { color: #8aa6bd; font-size: 10px; line-height: 1.4; }
+
+/* The override mark: this value is not the one from the chosen preset. */
+.settings__row--overridden .settings__name::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #ffb254;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.settings__toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  border: none;
+  background: rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  flex: none;
+  padding: 0;
+  transition: background 160ms ease;
+}
+
+.settings__toggle::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.settings__toggle[aria-checked='true'] { background: rgba(57, 208, 255, 0.75); }
+.settings__toggle[aria-checked='true']::after { transform: translateX(16px); }
+
+.settings__select {
+  appearance: none;
+  height: 26px;
+  padding: 0 24px 0 9px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.06)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%238aa6bd' stroke-width='1.6'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E")
+    no-repeat right 7px center / 11px;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  flex: none;
+}
+
+.settings__select:focus-visible { outline: 2px solid #ffb254; }
+
+.settings__range { display: flex; align-items: center; gap: 8px; }
+
+.settings__slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 104px;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+  flex: none;
+}
+
+.settings__slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.settings__slider::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.settings__slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+.settings__slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.settings__value {
+  font-size: 10px;
+  color: #8aa6bd;
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+
+.settings__chips { display: flex; gap: 5px; flex-wrap: wrap; padding: 2px 0 4px; }
+
+.settings__chip {
+  flex: 1 1 auto;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.05);
+  color: #8aa6bd;
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+
+.settings__chip:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+
+.settings__chip[aria-pressed='true'] {
+  background: rgba(57, 208, 255, 0.16);
+  border-color: rgba(57, 208, 255, 0.5);
+  color: #dcf3ff;
+}
+
+.settings__planets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; padding: 2px 0 4px; }
+
+.settings__planet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: #8aa6bd;
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: all 160ms ease;
+}
+
+.settings__planet:hover { background: rgba(255, 255, 255, 0.09); }
+
+.settings__planet[aria-pressed='true'] {
+  border-color: rgba(57, 208, 255, 0.6);
+  background: rgba(57, 208, 255, 0.12);
+  color: var(--text);
+}
+
+.settings__orb {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  box-shadow: inset -6px -5px 10px rgba(0, 0, 0, 0.5), 0 3px 10px rgba(0, 0, 0, 0.4);
+}
+
+/* Markdown the models write, drawn (`ui/markdown.ts`). The box it lands in
+   keeps its own color, size and scroll; this spaces the blocks and marks the
+   spans. Bold is a lighter color as well as a weight: in a small monospace
+   the weight alone is easy to miss. */
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p { margin: 0 0 0.6em; }
+.md h3, .md h4, .md h5, .md h6 {
+  margin: 0.9em 0 0.4em;
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #eef6ff;
+}
+.md h3 { font-size: 1.12em; }
+.md h4 { font-size: 1.05em; }
+.md strong { font-weight: 600; color: #eef6ff; }
+.md em { font-style: italic; }
+.md del { opacity: 0.6; }
+.md code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(140, 190, 225, 0.1);
+  font: inherit;
+}
+.md pre {
+  margin: 0 0 0.6em;
+  padding: 6px 8px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.28);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.md pre code { padding: 0; background: none; }
+.md ul, .md ol { margin: 0 0 0.6em; padding-left: 1.6em; }
+.md li { margin: 0.15em 0; }
+.md li > p { margin: 0; }
+.md li > ul, .md li > ol { margin: 0.15em 0 0.25em; }
+.md blockquote {
+  margin: 0 0 0.6em;
+  padding-left: 0.8em;
+  border-left: 2px solid rgba(140, 190, 225, 0.25);
+  opacity: 0.85;
+}
+.md hr { margin: 0.8em 0; border: 0; border-top: 1px solid rgba(140, 190, 225, 0.15); }
+.md__table { margin: 0 0 0.6em; overflow-x: auto; }
+.md table { width: 100%; border-collapse: collapse; }
+.md th, .md td {
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(140, 190, 225, 0.12);
+  text-align: left;
+  vertical-align: top;
+}
+.md th { font-weight: 600; color: #eef6ff; border-bottom-color: rgba(140, 190, 225, 0.3); }
+.md__link { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
