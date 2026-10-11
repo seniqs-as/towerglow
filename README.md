@@ -1,5 +1,9 @@
 # Towerglow
 
+<p align="center">
+  <img src="src/client/assets/towerglow_image.png" width="480" alt="Towerglow: towers on a dark grid with their windows lit, one glowing amber with two rings around it, and an astronaut at its foot">
+</p>
+
 Towerglow draws your Claude Code and Codex sessions as a living 3D city, in a
 browser tab on your own machine. Every project you work in is a tower; its
 windows light up while agents read, edit and run commands in it, and every
@@ -69,6 +73,8 @@ The page opens on the **city**: one tower per project, windows lit by the
 work, a light scene that runs anywhere. **V** (or the button beside Settings)
 switches to the **colony**, the full 3D view with many more polygons, and
 back.
+
+![The city view: wireframe towers on a dark grid, two of them lit amber with a status badge above the project name, and the quota bars at the top right](src/client/assets/towerglow_screenshot.png)
 
 Keys in the page: drag to move, scroll to zoom at the cursor, **C** frames the
 whole map. In the colony, **H** frames the ship, **P** cycles the planet, **T**
