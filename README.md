@@ -88,6 +88,50 @@ On macOS a desktop notification tells you when the plan needs you, and
 on your repositories, paid with your quota or your API credit: the rest is in
 [The CEOs in short](#the-ceos-in-short).
 
+## Board, Reports and Outcomes
+
+Planning is one of four panels the CEOs bring. The other three follow a piece
+of work through three moments: deciding it, reading how it went, and seeing
+what it changed.
+
+**Board: ask, and decide.** Ask either CEO a question in your own words
+("where am I wasting tokens?"), or run one of five ready analyses: session
+report, development trend, token waste, structural improvements, quota and
+spend. You choose how deep it goes: *fast* answers in a few lines, *standard*
+is the normal report, *deep* also opens your code. A CEO answers only when
+you ask, and each answer shows what it cost. An answer may end with up to
+four **proposals**, each a piece of work for one project. The card shows the
+project and the whole task a worker would be told, and you accept or reject
+it. Accepting starts a worker in that project, which edits the code without
+committing or pushing it, and then a second opinion on what it did. With
+`--no-execute` accepting starts nothing.
+
+**Reports: how each job went.** Every piece of work you accepted is here,
+from a proposal or from a plan: what was asked, the worker's one line on what
+it did, how long it took, its tool calls and its cost.
+
+- *read the outcome* opens the worker's full account.
+- *agent's feedback* is the second opinion. The session that normally works
+  in that project is continued from a copy and asked for objections, not for
+  approval; the row says at a glance whether it agrees or **objected**. If
+  there was no session to continue, a fresh one checks the premises against
+  the repository instead, and the row says so (*premise check*). A proposal
+  always gets a second opinion; for the tasks of a plan it is a box to tick
+  in Planning, and it doubles the cost.
+- *session log* opens a terminal window with everything the session did, and
+  *open* shows each document the worker wrote. Both are for macOS.
+
+**Outcomes: what it changed.** A job that got done and a job that helped are
+two different facts. For each job this panel compares your sessions in that
+project in the 14 days before and the 14 days after, on five figures: cost
+per session, weighted tokens per line, cache read, output share and tool
+calls per turn. It is careful about what it claims: a figure appears only
+with at least three sessions on each side (until then it says how many are
+missing), and a change under 15% is not called better or worse. You can then
+*ask the CEO what else could explain this*: it is asked to find another
+cause for the change, not to take the credit, and the answer says whether it
+could.
+
 ## Quick start
 
 You need macOS or Linux, [Node.js](https://nodejs.org) 22.18 or newer, and
@@ -178,7 +222,9 @@ still what you see. Codex's usage comes from its own files and needs nothing.
 
 With `--ceo`, two advisors join the city, one for each tool: you can ask
 them about your sessions and spending (the **Board**), plan work with them in
-a meeting (**Planning**), and read how the accepted work went (**Reports**).
+a meeting (**Planning**), read how the accepted work went (**Reports**) and
+what it changed afterwards (**Outcomes**). The panels are described in
+[Board, Reports and Outcomes](#board-reports-and-outcomes).
 
 They run through your own `claude` and `codex` command-line tools, on
 whatever those are signed in with: a subscription or an API key (see

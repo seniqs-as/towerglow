@@ -19,7 +19,7 @@ see what the observatory sees, and they work through four panels:
   Towerglow runs its tasks, one project at a time.
 - **Reports**: every piece of work you accepted, with what the worker did, a
   second opinion on it, and the full log.
-- **Effect**: how a project went in the weeks after a job, with the numbers
+- **Outcomes**: how a project went in the weeks after a job, with the numbers
   before and after, and a judgement you can ask the CEO for.
 
 In the colony they sit at a desk inside the ship (**E** walks you in), and
@@ -52,7 +52,7 @@ Only when you do something:
 | Ask a CEO a question, or run an analysis | One call to that CEO; asking both is one call each |
 | Write a message in the planning meeting | One call, and at most three: a resumed meeting that fails is restarted once, and a turn stopped by the spending cap is allowed one short wrap-up |
 | Accept a Board proposal (executive mode) | A worker session in the project, and a second opinion on its work |
-| Ask for a judgement in Effect | One call |
+| Ask for a judgement in Outcomes | One call |
 | Approve a plan | Its tasks start one by one, each as a worker session |
 
 There is no background analysis and no timer that asks a CEO anything. The
@@ -93,7 +93,7 @@ No process is started with a permission bypass: no
 
 | Process | Edits files | Runs commands | Network |
 | --- | --- | --- | --- |
-| A CEO answering, the meeting chair, the Effect judge | No. Claude: editing tools denied. Codex: read-only sandbox | No. Claude: shell denied. Codex: read-only sandbox | Claude: web tools denied |
+| A CEO answering, the meeting chair, the Outcomes judge | No. Claude: editing tools denied. Codex: read-only sandbox | No. Claude: shell denied. Codex: read-only sandbox | Claude: web tools denied |
 | Worker for an accepted **Board proposal** | Yes, in the project (Claude: `acceptEdits` mode; Codex: workspace-write sandbox) | Claude: only the allow-list below, with commit and push off, inside the OS sandbox; anything else fails at once instead of waiting for an approval. Codex: within its sandbox | None: the sandbox gives the shell no network, and the web tools are denied. Codex: off |
 | Worker for a **planned task** | Yes, in the project | Claude: only the allow-list below, with the git boxes you ticked, inside the OS sandbox. Codex: within its sandbox | Claude: none, except `git push` and `git pull` when push is ticked. Codex: on when push is ticked |
 | Second opinion | No. Claude: plan mode. Codex: read-only sandbox | No | Not granted by Towerglow |
