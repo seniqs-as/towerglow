@@ -168,6 +168,13 @@ workers: they run outside the sandbox.
   you why its worker cannot start yet.
 - **A failed task stops its project's queue.** There are no automatic
   retries: you retry or skip it from the panel.
+- **A task stopped at the reserve is not a failed one.** It goes back in the
+  queue and starts again on its own, in the same session, when the usage
+  window has room, which for the 5-hour window means within five hours. The
+  plan is not paused, and the tasks of the other tool go on. The
+  exception is a task the reserve stops twice in a row: it does not fit in a
+  window as it was planned, so it stops restarting, its project's queue
+  waits, and you retry or skip it. Your retry gives it two tries again.
 - **A worker that needs something stops and asks.** A question becomes a
   card in the panel, and your answer resumes the same session. A command it
   was refused is listed, and "allow and resume" adds it to the project's
@@ -180,7 +187,7 @@ workers: they run outside the sandbox.
 | Guard | Default | What it does |
 | --- | --- | --- |
 | `--ceo-quota-max` | 85% | No CEO call and no new worker while any usage window is at or above it |
-| Reserve | 30% of the 5-hour window, 20% of the 7-day one | A planned task starts only if its expected cost leaves the reserve free. While tasks run, a window reaching the reserve stops them and pauses the plan. Work from Board proposals and second opinions does not start past the reserve either, and is stopped on it. Set in the planning panel |
+| Reserve | 30% of the 5-hour window, 20% of the 7-day one | A planned task starts only if its expected cost leaves the reserve free. While tasks run, a window reaching the reserve stops that tool's tasks: they go back in the queue and start again on their own, in the same session, once the window has room. A task stopped this way twice in a row stops restarting and waits for you. Work from Board proposals and second opinions does not start past the reserve either, and is stopped on it. Set in the planning panel |
 | `--ceo-max-call` | $2 | Stops a CEO, chair or judge call while it runs, once its estimated cost passes the cap |
 | `--ceo-budget` | $10 per 24 hours | The cap for a tool on an API key, in place of the quota ceiling and the reserve. For a tool on its plan it is ignored once Towerglow has read that plan's usage windows |
 | Parallel workers | 2 (up to 4) | How many planned tasks run at once, on different projects |
@@ -339,6 +346,11 @@ Said plainly, so that nothing comes as a surprise:
 - The reserve is checked before work starts and on every new usage reading,
   so a worker can cross the line by what it spends between two readings
   before it is stopped.
+- A plan left running uses your plan up to the reserve in every window, for
+  as long as it has tasks: that is what the reserve is for, so set it to what
+  you want left. A task that restarts after a stop at the reserve can spend
+  up to the line once more before it is held.
+- Nothing here keeps your machine awake. If it sleeps, the queue sleeps.
 - With push ticked, `git push` and `git pull` run outside the sandbox, and can
   reach any host a worker points them at.
 - Claude's file tools are outside the OS sandbox: they edit inside the project

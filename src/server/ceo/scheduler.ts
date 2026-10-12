@@ -29,7 +29,9 @@ import type { Plan } from './plan.ts';
  *     and runs alone, so one finished task teaches the next one's price.
  *
  * The reserve is also held while tasks run, not only when they start:
- * `reserveBreach` is what the desk stops the fleet with.
+ * `reserveBreach` is what the desk stops the fleet with. The stopped tasks go
+ * back in the queue, and rule 5 is what holds them there and what lets them
+ * start again once the window has room.
  */
 
 /**

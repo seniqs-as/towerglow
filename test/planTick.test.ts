@@ -281,32 +281,85 @@ test('pause stops the running workers too, and the task goes back in the queue w
   assert.match(again.task, /stopped: the plan was paused/);
 });
 
-test('the guard stops the fleet at the reserve and pauses the plan, saying why', async () => {
+test('at the reserve the fleet is stopped and its tasks wait; when the window has room they start again on their own', async () => {
+  // The plan used to be paused here, and it stayed paused after the window
+  // had reset, until a click: a plan left to run does not run on like that
+  // (the user's call, 2026-10-12).
   const r = rig();
   priced(r);
   await approved(r, 2);
   const [a1, b1] = [r.desk.plan().projects[0]!.tasks[0]!, r.desk.plan().projects[1]!.tasks[0]!];
+  r.desk.onSession(a1.id, 'sess-a');
   // default reserve is 30% of the 5h: 69% is still below the line
   r.snapshot.limits = [limits(69, 10)];
   r.desk.guard();
   assert.equal(r.stopped.length, 0);
-  assert.equal(r.desk.plan().status, 'approved');
-  // a worker's own reading says 70%: stopped at once, and the plan paused
+  // a worker's own reading says 70%: stopped at once, and nothing is paused
   r.snapshot.limits = [limits(70, 10)];
   r.desk.guard();
   assert.deepEqual(r.stopped.map((x) => x.jobId), [a1.jobId, b1.jobId]);
   assert.ok(r.stopped.every((x) => x.reason.startsWith(STOPPED_RESERVE) && /5h at 70% reached the 30% reserve/.test(x.reason)));
-  const plan = r.desk.plan();
-  assert.equal(plan.status, 'paused');
-  assert.ok(plan.minutes.some((m) => /paused by the reserve: 5h at 70%/.test(m.text)));
-  const ev = r.desk.event();
-  assert.ok(ev.t === 'plan' && /paused: 5h at 70%/.test(ev.next ?? ''));
-  // the next tick finds them still dying: stopped again, noted once
+  assert.equal(r.desk.plan().status, 'approved');
+  // the next tick finds them still dying: not stopped again, noted once
   r.desk.tick();
-  assert.equal(r.desk.plan().minutes.filter((m) => /paused by the reserve/.test(m.text)).length, 1);
-  // their ends put them back in the queue
+  assert.equal(r.stopped.length, 2);
+  assert.equal(r.desk.plan().minutes.filter((m) => /the reserve stopped the claude tasks: 5h at 70%/.test(m.text)).length, 1);
+  // their ends put them back in the queue, and the window still holds them
   const reason = r.stopped[0]!.reason;
-  r.desk.onJobEnd(a1.id, a1.jobId!, { ok: false, outcome: '', costUsd: 1, reason, at: T0 + 60_000 });
+  r.desk.onJobEnd(a1.id, a1.jobId!, { ok: false, outcome: '', costUsd: 1, reason, at: T0 + 60_000, weighted: 100_000 });
+  r.desk.onJobEnd(b1.id, b1.jobId!, { ok: false, outcome: '', costUsd: 1, reason, at: T0 + 60_000, weighted: 100_000 });
+  assert.equal(r.desk.plan().projects[0]!.tasks[0]!.status, 'queued');
+  assert.equal(r.orders.length, 2, 'over the line nothing starts');
+  const ev = r.desk.event();
+  assert.ok(ev.t === 'plan' && /would breach the 30% reserve/.test(ev.next ?? ''), ev.t === 'plan' ? ev.next ?? '' : '');
+  // the window resets: the next tick launches them again, each in its session
+  r.snapshot.limits = [limits(0, 10)];
+  r.desk.tick();
+  const again = r.orders.find((o) => o.origin.taskId === a1.id && o.origin.attempt === 2);
+  assert.ok(again, 'the stopped task starts again with no click');
+  assert.equal(again.resume, 'sess-a');
+  assert.match(again.task, /stopped at the reserve/);
+  assert.ok(r.orders.some((o) => o.origin.taskId === b1.id && o.origin.attempt === 2));
+});
+
+test('a task the reserve stops twice in a row stops restarting and waits for you, while the next project runs', async () => {
+  // What a reset must not bring back forever: the translation that emptied
+  // the 5h made 1939 tool calls through fifteen subagents, and restarted at
+  // every window it would burn up to the line each time with nobody looking.
+  const r = rig();
+  priced(r);
+  await approved(r, 1);
+  const a1 = r.desk.plan().projects[0]!.tasks[0]!;
+  const stopAtReserve = (attempt: number): void => {
+    r.snapshot.limits = [limits(70, 10)];
+    r.desk.guard();
+    const s = r.stopped.at(-1)!;
+    assert.equal(s.jobId, `${a1.id}:${attempt}`);
+    r.desk.onJobEnd(a1.id, s.jobId, { ok: false, outcome: '', costUsd: 1, reason: s.reason, at: T0 + 60_000, weighted: 100_000 });
+  };
+
+  stopAtReserve(1);
+  assert.equal(r.desk.plan().projects[0]!.tasks[0]!.status, 'queued');
+  r.snapshot.limits = [limits(0, 10)];
+  r.desk.tick();
+  assert.equal(r.orders.at(-1)!.origin.attempt, 2, 'once, it starts again on its own');
+
+  stopAtReserve(2);
+  const held = r.desk.plan().projects[0]!.tasks[0]!;
+  assert.equal(held.status, 'failed');
+  assert.match(held.reason ?? '', /5h at 70% reached the 30% reserve\), 2 times in a row: retry resumes it/);
+  assert.ok(r.desk.plan().minutes.some((m) => /"alpha 1" was stopped at the reserve 2 times in a row/.test(m.text)));
+  const ev = r.desk.event();
+  assert.ok(ev.t === 'plan' && ev.stall?.needsYou === true && /alpha: a task failed, retry or skip it/.test(ev.stall.text));
+
+  // The window resets again: alpha stays where it is, and the plan goes on.
+  r.snapshot.limits = [limits(0, 10)];
+  r.desk.tick();
+  assert.ok(!r.orders.some((o) => o.origin.taskId === a1.id && o.origin.attempt === 3));
+  assert.equal(r.orders.at(-1)!.summary, 'beta 1');
+
+  // Your retry resumes the same task, and it gets its two tries again.
+  r.desk.handle({ t: 'plan.retry', taskId: a1.id }, r.reply);
   assert.equal(r.desk.plan().projects[0]!.tasks[0]!.status, 'queued');
 });
 

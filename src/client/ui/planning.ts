@@ -1087,7 +1087,7 @@ export class Planning {
     };
     mk('approve', () => this.#act.onApprove(), doc.status === 'proposed', ready.why, ready.blocked);
     mk('pause', () => this.#act.onPause(), doc.status === 'approved', 'Stops the running workers too: their tasks go back in the queue and resume picks them up where they were.');
-    mk('resume', () => this.#act.onResume(), doc.status === 'paused', unread ?? 'Tasks stopped by the pause or the reserve resume their own sessions.', unread !== null);
+    mk('resume', () => this.#act.onResume(), doc.status === 'paused', unread ?? 'Tasks stopped by the pause resume their own sessions.', unread !== null);
     mk('launch next', () => this.#act.onLaunch(), doc.status === 'approved', 'Without waiting for the tick.');
     const reason = doc.status === 'proposed' ? ready.why : doc.status === 'paused' ? unread : null;
     if (reason) {

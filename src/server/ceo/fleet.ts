@@ -217,7 +217,8 @@ export interface Fleet {
   /**
    * Stop the work started outside the plan -- proposal workers, second
    * opinions -- of a provider whose window has reached the reserve. The
-   * plan's own tasks are the desk's: it stops them and pauses the plan.
+   * plan's own tasks are the desk's: it stops them and puts them back in
+   * the queue, where they wait for the window to have room.
    */
   guardReserve(now: number): void;
   stopAll(): void;

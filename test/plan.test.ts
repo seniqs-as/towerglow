@@ -667,6 +667,81 @@ test('a failure is retried or skipped, and skipping closes the plan if nothing i
   assert.equal(s.get().status, 'done');
 });
 
+const RESERVE_STOP = 'stopped at the reserve (5h at 70% reached the 30% reserve)';
+
+/** One attempt of the task, ended by the reserve. */
+function stoppedAtReserve(s: PlanStore, id: string): void {
+  s.launched(id, `${id}:${findTask(s.get(), id)!.task.attempts + 1}`, T0);
+  s.finished(id, { status: 'queued', did: null, question: null, reason: RESERVE_STOP, learned: 90_000, byReserve: true }, T0);
+}
+
+test('the reserve stops a task once and it waits in the queue; twice in a row and it waits for you', () => {
+  // Stopped once it starts again on its own when the window has room, which
+  // is what lets a plan run through the night. A second stop in a row says
+  // the task does not fit in a window as it was planned: coming back at
+  // every reset, it would burn up to the line each time with nobody looking.
+  const s = proposed();
+  const id = onlyTask(s);
+  s.approve(T0);
+  s.attachSession(id, 'sess-1', T0);
+
+  stoppedAtReserve(s, id);
+  let t = findTask(s.get(), id)!.task;
+  assert.equal(t.status, 'queued', 'the first stop is not a failure');
+  assert.equal(t.reason, RESERVE_STOP);
+
+  stoppedAtReserve(s, id);
+  t = findTask(s.get(), id)!.task;
+  assert.equal(t.status, 'failed', 'the second in a row goes through the door a failure uses');
+  assert.equal(t.reason, `${RESERVE_STOP}, 2 times in a row: retry resumes it`);
+  assert.equal(t.sessionId, 'sess-1', 'the session stays: retry resumes it');
+  assert.equal(s.get().status, 'approved', 'the plan is not paused: other projects go on');
+
+  // Your retry is a go-ahead: the count starts over.
+  assert.equal(s.retry(id, T0).ok, true);
+  stoppedAtReserve(s, id);
+  assert.equal(findTask(s.get(), id)!.task.status, 'queued');
+});
+
+test('"in a row" means nothing else happened in between: a pause is not counted, any other ending clears it', () => {
+  const s = proposed();
+  const id = onlyTask(s);
+  s.approve(T0);
+
+  // A pause you pressed between two stops neither counts nor forgives.
+  stoppedAtReserve(s, id);
+  s.launched(id, `${id}:2`, T0);
+  s.finished(id, { status: 'queued', did: null, question: null, reason: 'stopped: the plan was paused', learned: null }, T0);
+  assert.equal(findTask(s.get(), id)!.task.status, 'queued');
+  stoppedAtReserve(s, id);
+  assert.equal(findTask(s.get(), id)!.task.status, 'failed');
+
+  // A question answered in between is the task moving: the next stop is a first one.
+  s.retry(id, T0);
+  stoppedAtReserve(s, id);
+  s.launched(id, `${id}:5`, T0);
+  s.finished(id, { status: 'question', did: null, question: 'CSV or JSON?', reason: '', learned: null }, T0);
+  s.answer(id, 'CSV', T0);
+  stoppedAtReserve(s, id);
+  assert.equal(findTask(s.get(), id)!.task.status, 'queued');
+});
+
+test('the count of reserve stops survives a restart and never reaches the panel', () => {
+  const dir = tmp();
+  const s = proposed(store(dir));
+  const id = onlyTask(s);
+  s.approve(T0);
+  stoppedAtReserve(s, id);
+  assert.equal('reserveStops' in docOf(s.get()), false);
+  s.save();
+
+  // A restart must not hand the task two more tries.
+  const again = store(dir);
+  assert.equal(findTask(again.get(), id)!.task.status, 'queued');
+  stoppedAtReserve(again, id);
+  assert.equal(findTask(again.get(), id)!.task.status, 'failed');
+});
+
 test('reset refuses with a task running, archives the old plan and keeps your settings', () => {
   const dir = tmp();
   const s = proposed(store(dir));

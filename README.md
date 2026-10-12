@@ -15,6 +15,12 @@ your disk. Out of the box it is an observatory and nothing more: it makes no
 network connections, calls no model, and writes nothing outside its own
 folder.
 
+Turn on its optional CEOs and it also runs your backlog: you plan the work
+for all your projects in one meeting, answer the questions up front, and
+Towerglow works through the list on its own, in the order you set, while
+keeping part of your quota free for you. See
+[Plan the work, then let it run](#plan-the-work-then-let-it-run).
+
 Towerglow is an independent project, not affiliated with Anthropic or OpenAI.
 
 ## Two modes
@@ -33,6 +39,54 @@ unless you start with `--ceo`.
 What the observatory reads, shows and stores is in [PRIVACY.md](PRIVACY.md).
 What turning on the CEOs implies, and how to keep it under control, is in
 [docs/ceo-mode.md](docs/ceo-mode.md). Read that page before using `--ceo`.
+
+## Plan the work, then let it run
+
+This is the most useful thing the CEOs do. An agent you start on a task
+usually stops at the first open question and waits for you. Here the
+questions are asked first, all together, and the work runs afterwards without
+you.
+
+1. **Hold a planning meeting.** Start with `--ceo`, open **Planning** and
+   write, in your own words, what you want done in each project and which
+   project comes before which. There is no form to fill in, and you can
+   attach your to-do files. One of the CEOs chairs the meeting.
+2. **Answer its questions.** The chair reads the code of each project and
+   asks what a session would otherwise stop to ask: the scope, what "done"
+   means, your conventions, what not to touch, how to check the result. Then
+   it writes a briefing for each task, meant to carry everything a worker
+   needs to finish without asking.
+3. **Check the order and set what to keep free.** The plan lists the tasks
+   of each project and ranks the projects from what you wrote; you can still
+   move one up or down. You choose how much of your plan's 5-hour and 7-day
+   usage to keep for yourself: 30% and 20% unless you change it. An API key
+   has no usage windows: the cap there is an amount in dollars per 24 hours,
+   `--ceo-budget`, set when you start.
+4. **Approve.** You read every briefing first, and decide for each project
+   whether its worker may commit and push. Nothing starts before your yes.
+5. **It runs.** Towerglow starts the tasks itself, in your order: one worker
+   per project, up to two projects at a time (you can set one to four), the
+   next task as soon as one ends. It paces itself on your quota: a task that
+   would eat into what you kept free waits, and starts when the usage window
+   has room again. Leave Towerglow running, and your machine awake, and the
+   queue keeps going through the night.
+
+It stops for you only where it has to:
+
+- A worker that still has a question stops and asks it in the panel. Only its
+  project waits, the others go on, and your answer resumes the same session.
+- A task that fails, or runs past its time limit (15 to 60 minutes, by its
+  size), stops the queue of its project. Nothing is retried on its own.
+- A task that reaches what you kept free while it runs is stopped, waits for
+  the usage window to have room, and starts again on its own in the same
+  session. If that happens to the same task twice in a row, it stops
+  restarting and waits for you: it does not fit in a window as planned.
+- No worker starts in a project where you are working yourself.
+
+On macOS a desktop notification tells you when the plan needs you, and
+**Reports** keeps what each worker did, with its full log. This is real work
+on your repositories, paid with your quota or your API credit: the rest is in
+[The CEOs in short](#the-ceos-in-short).
 
 ## Quick start
 

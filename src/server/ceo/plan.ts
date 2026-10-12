@@ -62,6 +62,18 @@ export const DEFAULT_PARALLEL = 2;
 export const MAX_PARALLEL = 4;
 /** Above this the scheduler could never launch anything: a reserve, not a lock. */
 export const MAX_RESERVE_PERCENT = 90;
+/**
+ * How many attempts in a row the reserve may stop before a task waits for you.
+ *
+ * A task stopped at the reserve goes back in the queue and starts again on
+ * its own when the window has room: that is what lets a plan run through
+ * the night. The first stop can be anyone's doing -- your own terminals, the
+ * task running beside it -- but a second one in a row says this task does
+ * not fit in a window as it was planned. The translation that emptied the 5h
+ * (1939 tool calls through fifteen subagents) would otherwise come back at
+ * every reset and burn up to the line each time, with nobody looking.
+ */
+export const MAX_RESERVE_STOPS = 2;
 export const MAX_MINUTES = 60;
 export const MAX_MEETING_QUESTIONS = 12;
 export const MAX_TASKS_PER_PROJECT = 20;
@@ -92,6 +104,12 @@ export interface Plan extends Omit<PlanDoc, 'attachments' | 'branches' | 'active
    * the panel no longer shows. Server-side only.
    */
   withdrawn: string[];
+  /**
+   * Attempts in a row the reserve stopped, by task id: see
+   * `MAX_RESERVE_STOPS`. Server-side only, and saved: a restart must not
+   * hand a task two more tries.
+   */
+  reserveStops: Record<string, number>;
 }
 
 /** The outcome of a change: the plan as it is now, and why it did not change. */
@@ -113,6 +131,8 @@ export interface TaskReport {
   learned: number | null;
   /** With `question`: the commands it was refused and needs. Absent is none. */
   needs?: readonly string[];
+  /** With `queued`: it was the reserve that stopped it, not a pause. */
+  byReserve?: boolean;
 }
 
 /** What the chair's block carries once parsed. Resolution to ids happens here. */
@@ -263,6 +283,7 @@ export function emptyPlan(now: number, chair: ProviderId): Plan {
     commands: {},
     session: null,
     withdrawn: [],
+    reserveStops: {},
   };
 }
 
@@ -308,9 +329,10 @@ export interface WorldView {
 
 /** The plan as the panel reads it: no session id, no attachment text; branches and sessions from the world. */
 export function docOf(plan: Plan, world: WorldView = { branches: {}, active: {} }): PlanDoc {
-  const { session: _session, withdrawn: _withdrawn, attachments, ...rest } = plan;
+  const { session: _session, withdrawn: _withdrawn, reserveStops: _stops, attachments, ...rest } = plan;
   void _session;
   void _withdrawn;
+  void _stops;
   return {
     ...rest,
     branches: world.branches,
@@ -398,6 +420,16 @@ function isProject(v: unknown): v is PlanProject {
     && Array.isArray(p.tasks) && p.tasks.every(isTask);
 }
 
+/** The reserve's count as read from disk: positive whole numbers by task id, nothing else. */
+function stopsOf(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [id, n] of Object.entries(raw)) {
+    if (typeof n === 'number' && Number.isInteger(n) && n > 0) out[id] = n;
+  }
+  return out;
+}
+
 function isPlan(v: unknown): v is Plan {
   const p = v as Plan | null;
   return !!p && typeof p.id === 'string' && STATUSES.has(p.status)
@@ -438,6 +470,8 @@ export function createPlanStore(stateDir: string, opts: PlanStoreOptions): PlanS
         attachments: raw.plan.attachments.map((a) => ({ ...a, sent: a.sent === true })),
         questions: raw.plan.questions.map((q) => ({ ...q, seen: q.seen === true })),
         withdrawn: Array.isArray(raw.plan.withdrawn) ? raw.plan.withdrawn : [],
+        // A plan written before the count existed: nothing was stopped yet.
+        reserveStops: stopsOf(raw.plan.reserveStops),
         // A plan written when the tests were a checkbox: the box goes, the
         // commands start empty, and no task is waiting on a command.
         commands: commandsMapOf(raw.plan.commands),
@@ -933,10 +967,21 @@ export function createPlanStore(stateDir: string, opts: PlanStoreOptions): PlanS
       if (!found) return no('no such task');
       if (found.task.status !== 'running') return no(`${found.task.title} was not running`);
       const question = report.status === 'question' ? cut((report.question ?? '').trim(), MAX_QUESTION_CHARS) : null;
+      // The reserve stopped it: once it waits and starts again on its own,
+      // `MAX_RESERVE_STOPS` times in a row it is handed to you through the
+      // door a failure uses -- its queue stops, retry resumes its session.
+      // A pause is not counted either way, and any other ending clears it.
+      const byReserve = report.status === 'queued' && report.byReserve === true;
+      const stops = byReserve ? (plan.reserveStops[taskId] ?? 0) + 1 : 0;
+      const held = stops >= MAX_RESERVE_STOPS;
+      const reserveStops = { ...plan.reserveStops };
+      if (byReserve && !held) reserveStops[taskId] = stops;
+      else if (held || report.status !== 'queued') delete reserveStops[taskId];
       // A question with nothing asked is a worker that stopped without saying
       // why: that is a failure, and calling it a question would wait forever.
-      const status: TaskStatus = report.status === 'question' && !question ? 'failed' : report.status;
-      return ok(settle(patchTask(plan, taskId, {
+      const status: TaskStatus = held || (report.status === 'question' && !question) ? 'failed' : report.status;
+      const why = held ? `${report.reason}, ${stops} times in a row: retry resumes it` : report.reason;
+      return ok(settle(patchTask({ ...plan, reserveStops }, taskId, {
         status,
         question,
         // An answered question is spent once the attempt that got it ends
@@ -947,7 +992,7 @@ export function createPlanStore(stateDir: string, opts: PlanStoreOptions): PlanS
         learned: report.learned !== null && Number.isFinite(report.learned) && report.learned > 0
           ? report.learned : found.task.learned,
         reason: status === 'failed'
-          ? clip(report.reason || (report.status === 'question' ? 'it stopped without asking anything' : 'it failed'), MAX_FIELD_CHARS)
+          ? clip(why || (report.status === 'question' ? 'it stopped without asking anything' : 'it failed'), MAX_FIELD_CHARS)
           // Why it is waiting again: the panel says it, and the next attempt's
           // prompt tells the worker it was stopped, not that it failed.
           : status === 'queued' ? clip(report.reason, MAX_FIELD_CHARS) || null

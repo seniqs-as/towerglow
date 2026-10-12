@@ -338,7 +338,7 @@ test('a wait is a stall only when nothing runs; what needs you is one even besid
   assert.equal(stallOf(planOf('proposed', [{ status: 'question' }]), null), null, 'nothing is approved: nothing can stall');
   assert.equal(stallOf(planOf('done', [{ status: 'done' }]), null), null);
   assert.deepEqual(stallOf(planOf('approved', [{ status: 'running' }, { status: 'question' }]), null), { needsYou: true, text: 'alpha: a worker asks you' });
-  assert.deepEqual(stallOf(planOf('paused', [{ status: 'queued' }]), 'paused: 5h at 80% reached the 20% reserve'), { needsYou: true, text: 'paused: 5h at 80% reached the 20% reserve' });
+  assert.deepEqual(stallOf(planOf('paused', [{ status: 'queued' }]), 'paused by you: resume to go on'), { needsYou: true, text: 'paused by you: resume to go on' });
   const long = stallOf(planOf('approved', [{ status: 'queued' }]), 'x'.repeat(400));
   assert.ok(long && long.text.length <= 128, 'it travels on the delta channel');
 });

@@ -8,7 +8,7 @@ import { effortFor, modelFor } from './analyses.ts';
 import type { Launch, WorkOrder } from './fleet.ts';
 import type { JobEnd } from './jobs.ts';
 import { visibleProse } from './outcome.ts';
-import { countsOf, createPlanStore, docOf, findTask, openQuestionsOf } from './plan.ts';
+import { countsOf, createPlanStore, docOf, findTask, MAX_RESERVE_STOPS, openQuestionsOf } from './plan.ts';
 import type { Plan, PlanResult, PlanStore, ReadAnswer, TaskReport } from './plan.ts';
 import {
   MEETING_SYSTEM, openingPrompt, parseMeetingOutcome, pendingAttachments, restartPrompt, turnPrompt,
@@ -92,7 +92,11 @@ export const STOPPED_PAUSED = 'stopped: the plan was paused';
 /** The start of the reason an attempt stopped at the reserve carries; the window follows. */
 export const STOPPED_RESERVE = 'stopped at the reserve';
 
-/** An attempt we stopped for the quota or a pause: not a failure of the task, which goes back in the queue. */
+/**
+ * An attempt we stopped for the quota or a pause: not a failure of the task,
+ * which goes back in the queue. The store makes one exception, for a task the
+ * reserve stops `MAX_RESERVE_STOPS` times in a row.
+ */
 export function requeued(reason: string): boolean {
   return reason === STOPPED_PAUSED || reason.startsWith(STOPPED_RESERVE);
 }
@@ -238,8 +242,9 @@ export interface PlanDesk {
   launchNext(): string | null;
   /**
    * Hold the reserve against what runs now: a fleet over the line is stopped
-   * and the plan paused. Called by every tick and by every fresh reading of
-   * the quota, which a running worker brings with its own responses.
+   * and its tasks wait in the queue until the window has room. Called by
+   * every tick and by every fresh reading of the quota, which a running
+   * worker brings with its own responses.
    */
   guard(): void;
   /**
@@ -280,6 +285,8 @@ export function createPlanDesk(opts: PlanDeskOptions): PlanDesk {
   let thinking = false;
   /** The stall being watched for a notice: its kind, since when, and whether it was said. */
   let watched: { key: string; since: number; said: boolean } | null = null;
+  /** Attempts the reserve has told to stop and that have not ended yet, by job id. */
+  const halting = new Set<string>();
 
   const event = (): DeltaEvent => {
     const plan = store.get();
@@ -619,19 +626,30 @@ export function createPlanDesk(opts: PlanDeskOptions): PlanDesk {
     }
   };
 
-  /** Stop every running attempt, or those of one fleet, with the reason their end will carry. */
-  const stopRunning = (reason: string, provider: ProviderId | null = null): number => {
+  /** Stop every running attempt, with the reason their end will carry. */
+  const stopRunning = (reason: string): number => {
     let stopped = 0;
     for (const p of store.get().projects) {
       for (const task of p.tasks) {
         if (task.status !== 'running' || !task.jobId) continue;
-        if (provider !== null && task.provider !== provider) continue;
         if (opts.stop(task.jobId, reason)) stopped += 1;
       }
     }
     return stopped;
   };
 
+  /**
+   * The reserve, held against what runs: a fleet over the line is stopped,
+   * and its tasks go back in the queue with their sessions.
+   *
+   * The plan is NOT paused. It used to be: a plan left to run stayed paused
+   * after the window had reset, until a click, and the other fleet -- whose
+   * windows had room -- was held with it (the user's call, 2026-10-12). The
+   * headroom rule already holds a queued task while the window is over the
+   * line and launches it when there is room again, so the same rule brings
+   * these back, on the session they were in. What keeps a task that does not
+   * fit from coming back at every reset is the count: `MAX_RESERVE_STOPS`.
+   */
   const guard = (): void => {
     const plan = store.get();
     const t = now();
@@ -640,14 +658,25 @@ export function createPlanDesk(opts: PlanDeskOptions): PlanDesk {
     for (const provider of fleets) {
       const breach = reserveBreach(plan, provider, limits(), t);
       if (!breach) continue;
-      stopRunning(`${STOPPED_RESERVE} (${breach})`, provider);
-      // Once: the workers take a moment to die, and every tick until then
-      // finds them still running. Stopping twice is harmless, a second note
-      // in the minutes is not.
-      if (store.get().status !== 'approved') continue;
-      store.pause(t);
-      store.noteSystem(`paused by the reserve: ${breach}. The running tasks were stopped and go back in the queue; resume picks them up where they were.`, t);
-      next = clip(`paused: ${breach}`, MAX_FIELD_CHARS);
+      // Once per attempt: the workers take a moment to die, and every tick
+      // until then finds them still running. A second note in the minutes
+      // for the same stop would read as a second stop.
+      let stopped = 0;
+      for (const p of plan.projects) {
+        for (const task of p.tasks) {
+          if (task.status !== 'running' || task.provider !== provider || !task.jobId) continue;
+          if (halting.has(task.jobId)) continue;
+          if (!opts.stop(task.jobId, `${STOPPED_RESERVE} (${breach})`)) continue;
+          halting.add(task.jobId);
+          stopped += 1;
+        }
+      }
+      if (stopped === 0) continue;
+      store.noteSystem(
+        `the reserve stopped the ${provider} tasks: ${breach}. They go back in the queue and start again on their own `
+        + `when the window has room; one stopped ${MAX_RESERVE_STOPS} times in a row waits for you.`,
+        t,
+      );
       changed();
     }
   };
@@ -801,6 +830,7 @@ export function createPlanDesk(opts: PlanDeskOptions): PlanDesk {
 
     onJobEnd(taskId, jobId, out) {
       const t = now();
+      halting.delete(jobId);
       const report = out.ok ? parsePlanReport(out.outcome) : null;
       // Stopped by us for waiting: a question, with the generic text -- the
       // real one is in its transcript, and the session that holds it is the
@@ -823,8 +853,15 @@ export function createPlanDesk(opts: PlanDeskOptions): PlanDesk {
         needs: waited ? [] : (report?.needs ?? []),
         reason,
         learned: out.weighted ?? null,
+        byReserve: back && out.reason.startsWith(STOPPED_RESERVE),
       }, t);
-      if (res.ok && findTask(res.plan, taskId)?.task.status === 'question') opts.askJob(jobId);
+      const ended = res.ok ? findTask(res.plan, taskId)?.task : undefined;
+      if (ended?.status === 'question') opts.askJob(jobId);
+      // Sent back to the queue and found failed: the store counted one stop at
+      // the reserve too many. It is said in the minutes, next to the stops.
+      if (back && ended?.status === 'failed') {
+        store.noteSystem(`"${ended.title}" was stopped at the reserve ${MAX_RESERVE_STOPS} times in a row: it does not start again on its own. Retry resumes its session, skip drops it.`, t);
+      }
       changed();
       // A slot just freed: the next task starts now, not at the next tick.
       tick();
