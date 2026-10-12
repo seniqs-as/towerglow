@@ -33,9 +33,11 @@ not start.
 
 Towerglow does not talk to any model itself. It starts your own `claude` and
 `codex` command-line tools, which use your existing login and your plan's
-quota. Towerglow reads, stores and sends no API keys; the processes it starts
-inherit its environment, so if your environment points those tools at an API
-key, they use it.
+quota. Towerglow never stores, shows or sends an API key. The processes it
+starts inherit its environment, so if your environment points those tools at
+an API key, they use it; Towerglow looks only at whether such a variable is
+set, to know which spending guard applies. Which of the two to use, and what
+changes with a key, is in [Subscription or API key](#subscription-or-api-key).
 
 `--ceo` also turns on **executive mode**: accepting a proposal, or approving a
 plan, starts real work. Start with `--ceo --no-execute` to have the advice
@@ -180,7 +182,7 @@ workers: they run outside the sandbox.
 | `--ceo-quota-max` | 85% | No CEO call and no new worker while any usage window is at or above it |
 | Reserve | 30% of the 5-hour window, 20% of the 7-day one | A planned task starts only if its expected cost leaves the reserve free. While tasks run, a window reaching the reserve stops them and pauses the plan. Work from Board proposals and second opinions does not start past the reserve either, and is stopped on it. Set in the planning panel |
 | `--ceo-max-call` | $2 | Stops a CEO, chair or judge call while it runs, once its estimated cost passes the cap |
-| `--ceo-budget` | $10 per 24 hours | For API-key users: ignored once Towerglow can read your plan's usage windows |
+| `--ceo-budget` | $10 per 24 hours | The cap for a tool on an API key, in place of the quota ceiling and the reserve. For a tool on its plan it is ignored once Towerglow has read that plan's usage windows |
 | Parallel workers | 2 (up to 4) | How many planned tasks run at once, on different projects |
 | Time | | A CEO call stops after 3 minutes of silence or 10 minutes in all; a worker after 5 minutes of silence, or 15 to 60 minutes depending on the task's size (20 for proposal workers and second opinions) |
 
@@ -189,6 +191,111 @@ sessions, and the reserve is what stops them.
 
 Costs are shown as a share of your plan's usage windows, not in dollars, since
 a subscription does not bill by the token.
+
+## Subscription or API key
+
+Both work, and Towerglow does not choose. Every process it starts is your own
+`claude -p` or `codex exec`, started with Towerglow's environment, and it uses
+the credential that tool would use in your terminal:
+
+- **Claude Code** uses an `ANTHROPIC_API_KEY` from the environment whenever
+  there is one, ahead of your plan's login; without it, the login.
+- **Codex** uses a `CODEX_API_KEY` from the environment, or the key you gave
+  `codex login --with-api-key`; without them, your ChatGPT login.
+
+To run the CEOs on a key and keep your own terminals on your plan, set the
+key only in the shell you start Towerglow from. It then pays for everything
+Towerglow starts: the CEOs' answers, the meeting, the workers and the second
+opinions. There is no setting for the workers alone.
+
+The credential also decides which of the vendor's terms and data policies
+cover what the CEOs send: the plan's with a login, the API's with a key.
+
+This was checked in the code and against the two tools' documentation. It
+was not run end to end on an API key.
+
+### Which one for planned work
+
+We suggest an API key for the tasks of an approved plan. A question to a
+CEO, a turn of the meeting, a proposal you accept: each is one thing you
+did, answered once. An approved plan is different: its tasks start one after
+another, for hours, with nobody at the keyboard. Both vendors point that
+kind of use at API keys, without forbidding it on a plan:
+
+- **Anthropic.** `claude -p` on a plan is supported: "When you're signed in
+  with your Claude plan [...], `claude -p` and Agent SDK usage still draw
+  from your plan's usage limits"
+  ([Help Center](https://support.claude.com/en/articles/17154008-monthly-api-credits-for-max-and-team-plans)).
+  But plan login "is designed to support ordinary use of Claude Code and
+  other native Anthropic applications", and "Advertised usage limits for Pro
+  and Max plans assume ordinary, individual usage of Claude Code and the
+  Agent SDK"
+  ([Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)).
+  The [Consumer Terms](https://www.anthropic.com/legal/consumer-terms), which
+  cover Free, Pro and Max, do not allow access "through automated or
+  non-human means, whether through a bot, script, or otherwise", except with
+  an API key "or where we otherwise explicitly permit it".
+- **OpenAI.** `codex exec` "reuses saved CLI authentication by default", so
+  it runs on a ChatGPT login
+  ([Non-interactive mode](https://developers.openai.com/codex/noninteractive)).
+  For automation the same documentation says: "Use API key authentication
+  for programmatic Codex CLI workflows, such as CI/CD jobs", and "API keys
+  are still the recommended default for automation"
+  ([Authentication](https://developers.openai.com/codex/auth)).
+
+Neither page says where a queue of unattended workers stops being ordinary
+use. That is the vendor's call, and Anthropic "reserves the right to take
+measures to enforce these restrictions and may do so without prior notice".
+This is how we read those pages on 12 October 2026. It is not legal advice,
+and terms change: read them for your own case and your own plan.
+
+### What changes with a key
+
+The guards above were built around a plan's usage windows, and work billed
+by the token moves none. When it starts with `--ceo`, Towerglow looks at its
+own environment, the one its processes inherit, and treats a tool as billed
+by the token when one of these is set:
+
+- for Claude Code: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or one of the
+  switches `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`,
+  `CLAUDE_CODE_USE_FOUNDRY`;
+- for Codex: `CODEX_API_KEY`.
+
+`start` then says which guard holds:
+
+```
+  billing:   claude by the token (ANTHROPIC_API_KEY is set): no quota gates, capped at 10.00 USD per 24h
+```
+
+For that tool, know this before you set a key:
+
+- **No quota ceiling and no reserve.** A plan's windows are moved by your own
+  terminals, never by keyed work, so Towerglow does not gate on them, even
+  with your terminals on a plan and its bars on screen. `--ceo-budget` takes
+  their place: no CEO call and no worker starts once the last 24 hours have
+  cost that much, or leave less room than `--ceo-max-call`.
+- **The budget stops the next start, not the work in flight.** A worker that
+  is running is stopped only by its time limit, and one worker can cost more
+  than the whole budget: three planned workers were once measured at $107 of
+  list price in seventeen minutes.
+- **Codex work is not counted.** The budget adds up the cost each tool
+  declares when a call ends. Claude Code declares one; `codex exec` does not,
+  so on a Codex key only the time limits apply.
+- **Planned tasks of that tool run one at a time.** The planner prices a task
+  in points of a usage window before running several together. Without a
+  window the price stays unknown, and a task of unknown cost runs alone.
+- **A key Towerglow cannot see is not known to it.** One set outside its
+  environment (an `apiKeyHelper` or the `env` block in Claude Code's
+  settings, `codex login --with-api-key`) leaves the tool treated as on its
+  plan. `--ceo-budget` then holds only while no usage window is on record for
+  that tool: one left from when you were on a plan, even expired, switches it
+  off. Set the key in the shell you start Towerglow from, and check the
+  `billing:` line.
+
+So on a key, set a spending limit on the key itself, in the vendor's
+console. It is the one cap that does not depend on what Towerglow can see.
+The dollar figures Towerglow labels `list` are then Claude Code's own
+estimate of what you are billed, not a comparison.
 
 ## What is stored
 
@@ -219,7 +326,8 @@ project. `--no-notify` turns it off.
    anything leaves your machine.
 4. **Read the briefings and the allowed commands** of each project in the
    planning panel, and the full task on a proposal's card.
-5. **Keep the reserve** at a level that leaves room for your own work.
+5. **Keep the reserve** at a level that leaves room for your own work. On an
+   API key there is no reserve: set a spending limit on the key instead.
 6. **Hide the projects** you do not want the CEOs to read.
 7. **Read Reports** after each job: the worker's account, the second opinion
    and the full log are there.
@@ -240,3 +348,7 @@ Said plainly, so that nothing comes as a surprise:
   network only when push is ticked), with no per-command list: "no commit"
   is an instruction in their prompt.
 - One planning message can cost up to three calls.
+- On an API key the reserve and the quota ceiling do not exist, `--ceo-budget`
+  does not stop a worker that is running and does not count Codex work, and
+  Towerglow knows a tool is on a key only from its own environment. See
+  [What changes with a key](#what-changes-with-a-key).

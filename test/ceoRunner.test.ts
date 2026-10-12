@@ -7,7 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { CallMeter, CeoRunner, consumeLine, readQuota } from '../src/server/ceo/runner.ts';
-import type { CeoResult } from '../src/server/ceo/runner.ts';
+import type { CeoResult, CeoRunnerOptions } from '../src/server/ceo/runner.ts';
 import { createSpendLedger, weigh } from '../src/server/ceo/spend.ts';
 import type { SpendCaps } from '../src/server/ceo/spend.ts';
 import type { CeoState, Snapshot } from '../src/shared/protocol.ts';
@@ -127,7 +127,7 @@ interface Rig {
   results: CeoResult[];
 }
 
-function rig(clocks: { silenceMs: number; ceilingMs: number }): Rig {
+function rig(clocks: { silenceMs: number; ceilingMs: number }, extra: Partial<CeoRunnerOptions> = {}): Rig {
   const dir = tmp();
   const fake = fakeChild();
   const states: Rig['states'] = [];
@@ -147,6 +147,7 @@ function rig(clocks: { silenceMs: number; ceilingMs: number }): Rig {
     onResult: (r) => results.push(r),
     spawn: (() => fake.child) as never,
     ...clocks,
+    ...extra,
   });
   return { runner, fake, dir, states, results };
 }
@@ -238,6 +239,31 @@ test('the ledger gets the call total from result, not the sum of repeated blocks
   assert.equal(file.calls.length, 1);
   assert.equal(file.calls[0]!.usd, 0.0225142);
   assert.equal(file.calls[0]!.w, weigh({ in: 17, out: 282, cacheRead: 26482, cacheWrite: 8734 }));
+});
+
+test('a call on an API key has no share of a usage window: the windows on screen are a plan\'s', async () => {
+  // The report would price the call as a share of the 5h window, and the 5h
+  // window never saw it: the window is the terminals', the call was billed
+  // by the token.
+  const plan: Snapshot = {
+    ...SNAPSHOT,
+    limits: [{
+      provider: 'claude', at: 0, plan: 'max 5x',
+      windows: [{ label: '5h', usedPercent: 40, windowMinutes: 300, model: null, resetsAt: null }],
+    }],
+  };
+  const call = async (metered: boolean): Promise<CeoResult> => {
+    const r = rig(
+      { silenceMs: 1000, ceilingMs: 60_000 },
+      { snapshot: () => plan, weightedSince: () => 1_000_000, metered },
+    );
+    const asked = r.runner.ask('q', null, 'fast');
+    drip(r.fake, [...STREAM, RESULT_LINE], 2, () => r.fake.child.emit('close', 0, null));
+    await asked;
+    return r.results[0]!;
+  };
+  assert.equal((await call(false)).share?.label, '5h', 'on the plan a call is priced as a share of the window');
+  assert.equal((await call(true)).share, null);
 });
 
 test('rate_limit_event: the quota read from the call itself, in the status line\'s windows', () => {

@@ -34,6 +34,7 @@ const CTX: MeetingContext = {
     ],
   }],
   providers: ['claude', 'codex'],
+  metered: [],
   codexModel: null,
   now: T0,
 };
@@ -59,6 +60,17 @@ test('the first turn carries role, projects with roots, quota, models, to-do and
   assert.match(p, /alpha: ship the export\. beta later\./);
   assert.match(p, /--- TODO\.md \(16 chars\) ---\n- export\n- badge\n--- end ---/);
   assert.ok(p.trimEnd().endsWith(MEETING_CONTRACT.trimEnd()), 'the contract closes the prompt');
+});
+
+test('a fleet on an API key is told to the chair as billed by the token, not as waiting for a reading', () => {
+  // The desk hands the chair no window for it, and "no quota reading yet"
+  // would have the chair plan around a reading that never comes and a
+  // reserve that holds nothing.
+  const s = store();
+  s.say('alpha: ship the export.', T0);
+  const p = openingPrompt(s.get(), { ...CTX, limits: [], metered: ['claude'] });
+  assert.match(p, /- claude: billed by the token, not on a plan · no quota window and no reserve apply/);
+  assert.match(p, /- codex: no quota reading yet/);
 });
 
 test('the first turn carries the answers too, if there are any: the desk marks them read after every turn', () => {

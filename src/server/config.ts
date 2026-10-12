@@ -14,6 +14,50 @@ export function envOf(name: string, env: NodeJS.ProcessEnv = process.env): strin
   return env[`TOWERGLOW_${name}`];
 }
 
+/**
+ * What in the environment takes a tool off its plan login, in the order the
+ * tool itself looks. The first three of Claude's are switches, the rest are
+ * credentials.
+ */
+const METERED_ENV: Readonly<Record<ProviderId, readonly string[]>> = {
+  claude: [
+    'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
+    'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
+  ],
+  codex: ['CODEX_API_KEY'],
+};
+
+/**
+ * The environment variable that makes a tool's work here billed by the token,
+ * or `null` when it runs on its plan login.
+ *
+ * The CEOs' processes inherit this environment, and each tool takes its
+ * credential from it before its login: `claude -p` always uses an API key
+ * that is set, and a gateway token or a cloud provider outranks the key;
+ * `codex exec` uses CODEX_API_KEY. So what is set here says how the work
+ * started here is paid, and that decides which guard can hold it: a plan's
+ * usage windows are moved by your own terminals, never by work billed by the
+ * token, and a gate on them holds nothing.
+ *
+ * Only whether a variable is set is looked at; its value is never kept.
+ * OPENAI_API_KEY is left out on purpose: many shells export it for other
+ * programs while Codex is signed in with ChatGPT. A key configured where the
+ * environment does not show it -- an `apiKeyHelper`, the `env` block of
+ * Claude's settings, `codex login --with-api-key` -- is not seen, and that is
+ * said in docs/ceo-mode.md.
+ */
+export function meteredBy(provider: ProviderId, env: NodeJS.ProcessEnv = process.env): string | null {
+  for (const name of METERED_ENV[provider]) {
+    const value = env[name]?.trim() ?? '';
+    // A switch counts only when it reads as on. Anything else leaves the tool
+    // on its plan, which is the side to be wrong on: calling a subscriber
+    // metered would take the quota ceiling and the reserve away from them.
+    const on = name.startsWith('CLAUDE_CODE_USE_') ? /^(1|true|yes|on)$/i.test(value) : value !== '';
+    if (on) return name;
+  }
+  return null;
+}
+
 export interface Config {
   readonly port: number;
   readonly claudeDir: string;
@@ -46,6 +90,8 @@ export interface Config {
   readonly ceoQuotaMaxPercent: number;
   /** Cap on a single call: it covers the call that runs away, not the day's spending. */
   readonly ceoMaxCallUsd: number;
+  /** The tools whose work the CEOs start is billed by the token: see `meteredBy`. */
+  readonly ceoMetered: readonly ProviderId[];
   readonly ceoEveryMs: number | null;
   readonly execute: boolean;
   /** Which tools to watch. One that is not installed is skipped silently. */
@@ -157,7 +203,7 @@ function keepPrivate(stateDir: string): void {
   if ((st.mode & 0o077) !== 0) fs.chmodSync(stateDir, 0o700);
 }
 
-export function buildConfig(raw: RawOptions): Config {
+export function buildConfig(raw: RawOptions, env: NodeJS.ProcessEnv = process.env): Config {
   const homeDir = os.homedir();
   /*
    * The state sits NEXT TO home, but it is not home.
@@ -173,11 +219,19 @@ export function buildConfig(raw: RawOptions): Config {
    * from homeDir, that is, the sessions to WATCH. A copy with HOME moved would
    * have its own state and no city to show.
    */
-  const stateOpt = raw['state-dir'] ?? envOf('STATE_DIR');
+  const stateOpt = raw['state-dir'] ?? envOf('STATE_DIR', env);
   const stateDir = stateOpt ? path.resolve(stateOpt) : path.join(homeDir, STATE_DIR_NAME);
 
-  const port = intOpt(raw.port ?? envOf('PORT'), '--port', DEFAULT_PORT);
+  const port = intOpt(raw.port ?? envOf('PORT', env), '--port', DEFAULT_PORT);
   if (port !== 0 && (port < 1 || port > 65535)) throw new ConfigError(`port out of range: ${port}`);
+
+  // Off by default (the user's call, 2026-10-08, reversing the one of
+  // 2026-09-24): a plain `start` is the observatory alone, fully offline,
+  // and the CEOs come only when asked for with --ceo. `--no-ceo` stays
+  // accepted and wins over --ceo, so an old command line keeps meaning what
+  // it meant. Without the module on disk the desk fails to load and the
+  // world runs without it.
+  const ceo = raw.ceo === true && raw['no-ceo'] !== true;
 
   const ceoEveryMs = raw['ceo-every'] ? parseDuration(raw['ceo-every']) : null;
   // The scheduler's beat. Under ten seconds it would read the registry more
@@ -285,18 +339,15 @@ export function buildConfig(raw: RawOptions): Config {
     focus: raw['no-focus'] !== true && process.platform === 'darwin',
     notify: raw['no-notify'] !== true && process.platform === 'darwin',
     exclude: raw.exclude ?? [],
-    // Off by default (the user's call, 2026-10-08, reversing the one of
-    // 2026-09-24): a plain `start` is the observatory alone, fully offline,
-    // and the CEOs come only when asked for with --ceo. `--no-ceo` stays
-    // accepted and wins over --ceo, so an old command line keeps meaning what
-    // it meant. Without the module on disk the desk fails to load and the
-    // world runs without it.
-    ceo: raw.ceo === true && raw['no-ceo'] !== true,
+    ceo,
     ceoModel: raw['ceo-model'] ?? 'sonnet',
     ceoCodexModel: raw['ceo-codex-model'] ?? null,
     ceoBudgetUsd,
     ceoQuotaMaxPercent,
     ceoMaxCallUsd,
+    // Only with the CEOs: the observatory starts nothing that could be billed,
+    // and has no reason to look at what keys your shell holds.
+    ceoMetered: ceo ? ALL_PROVIDERS.filter((p) => meteredBy(p, env) !== null) : [],
     ceoEveryMs,
     // On by default: whoever starts with the CEOs has already chosen the CEOs,
     // and a proposal you accept that then doesn't start is a trap, not a
@@ -319,6 +370,31 @@ function parseProviders(value: string | undefined): readonly ProviderId[] {
     }
   }
   return wanted as ProviderId[];
+}
+
+/**
+ * What `start` prints about each CEO whose tool is billed by the token.
+ *
+ * The line above it in the banner, "stops above 85% quota", is true only on
+ * a plan, and this is the one place you are told which guard holds instead.
+ * Codex gets a line of its own because the budget adds up the cost a tool
+ * declares at the end of a call, and `codex exec` declares none.
+ */
+export function billingLines(
+  cfg: Pick<Config, 'ceoMetered' | 'ceoBudgetUsd'>,
+  ceoProviders: readonly ProviderId[],
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  let out = '';
+  for (const p of ceoProviders) {
+    if (!cfg.ceoMetered.includes(p)) continue;
+    const why = meteredBy(p, env);
+    const guard = p === 'codex'
+      ? 'it declares no cost, so only the time limits hold'
+      : `no quota gates, capped at ${cfg.ceoBudgetUsd.toFixed(2)} USD per 24h`;
+    out += `  billing:   ${p} by the token${why ? ` (${why} is set)` : ''}: ${guard}\n`;
+  }
+  return out;
 }
 
 export function capsOf(

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { buildConfig, isOwnState } from '../src/server/config.ts';
+import { billingLines, buildConfig, isOwnState, meteredBy } from '../src/server/config.ts';
 
 /*
  * `buildConfig` creates the token inside `~/.towerglow`: HOME is moved to a
@@ -68,6 +68,53 @@ test('the per-call cap drops to the budget when the budget is smaller', () => {
   // the reason was correct and the situation absurd.
   const cfg = inFakeHome(() => buildConfig({ 'ceo-budget': '0.40' }));
   assert.equal(cfg.ceoMaxCallUsd, 0.4);
+});
+
+/* ───────────── which tool is billed by the token ───────────── */
+
+test('an API key in the environment puts that tool on the dollar cap, and only that tool', () => {
+  // The CEOs' processes inherit this environment, and `claude -p` always uses
+  // a key that is set. Until 2026-10-12 the server did not look: it took any
+  // usage window it could read as proof of a subscription.
+  assert.equal(meteredBy('claude', { ANTHROPIC_API_KEY: 'sk-test' }), 'ANTHROPIC_API_KEY');
+  assert.equal(meteredBy('codex', { ANTHROPIC_API_KEY: 'sk-test' }), null);
+  assert.equal(meteredBy('codex', { CODEX_API_KEY: 'sk-test' }), 'CODEX_API_KEY');
+  // A gateway token and a cloud provider outrank the plan login the same way.
+  assert.equal(meteredBy('claude', { ANTHROPIC_AUTH_TOKEN: 'tok' }), 'ANTHROPIC_AUTH_TOKEN');
+  assert.equal(meteredBy('claude', { CLAUDE_CODE_USE_BEDROCK: '1' }), 'CLAUDE_CODE_USE_BEDROCK');
+
+  assert.deepEqual(inFakeHome(() => buildConfig({ ceo: true }, { ANTHROPIC_API_KEY: 'sk-test' })).ceoMetered, ['claude']);
+  assert.deepEqual(inFakeHome(() => buildConfig({ ceo: true }, {})).ceoMetered, []);
+  // The observatory starts nothing that could be billed: it does not look.
+  assert.deepEqual(inFakeHome(() => buildConfig({}, { ANTHROPIC_API_KEY: 'sk-test' })).ceoMetered, []);
+});
+
+test('what does not take a tool off its plan is not read as a key', () => {
+  // Calling a subscriber metered would take the quota ceiling and the reserve
+  // away from them, so every doubt stays on the plan's side.
+  assert.equal(meteredBy('claude', {}), null);
+  assert.equal(meteredBy('claude', { ANTHROPIC_API_KEY: '' }), null);
+  assert.equal(meteredBy('claude', { ANTHROPIC_API_KEY: '   ' }), null);
+  // The subscription's own long-lived token is still the subscription.
+  assert.equal(meteredBy('claude', { CLAUDE_CODE_OAUTH_TOKEN: 'tok' }), null);
+  // A switch that is off, or that says nothing a switch says.
+  assert.equal(meteredBy('claude', { CLAUDE_CODE_USE_VERTEX: '0' }), null);
+  assert.equal(meteredBy('claude', { CLAUDE_CODE_USE_VERTEX: 'false' }), null);
+  // Exported in many shells for other programs while Codex is on ChatGPT.
+  assert.equal(meteredBy('codex', { OPENAI_API_KEY: 'sk-test' }), null);
+});
+
+test('start says which guard holds for a tool on a key, and never prints the key', () => {
+  const cfg = { ceoMetered: ['claude', 'codex'] as const, ceoBudgetUsd: 10 };
+  const env = { ANTHROPIC_API_KEY: 'sk-secret', CODEX_API_KEY: 'sk-secret' };
+  const out = billingLines(cfg, ['claude', 'codex'], env);
+  assert.match(out, /claude by the token \(ANTHROPIC_API_KEY is set\): no quota gates, capped at 10\.00 USD per 24h\n/);
+  // The budget adds up declared costs, and `codex exec` declares none.
+  assert.match(out, /codex by the token \(CODEX_API_KEY is set\): it declares no cost, so only the time limits hold\n/);
+  assert.ok(!out.includes('sk-secret'));
+  // On its plan a tool has no line, and neither has a CEO that is not running.
+  assert.equal(billingLines({ ceoMetered: [], ceoBudgetUsd: 10 }, ['claude', 'codex'], {}), '');
+  assert.equal(billingLines(cfg, [], env), '');
 });
 
 /* ───────────── the state next to home, not inside it ───────────── */

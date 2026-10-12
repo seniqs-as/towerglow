@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
-  DeltaEvent, PlanProject, PlanStall, PlanTask, ProviderId, ServerFrame, Snapshot, TaskSize,
+  DeltaEvent, PlanProject, PlanStall, PlanTask, ProviderId, ProviderLimits, ServerFrame, Snapshot, TaskSize,
 } from '../../shared/protocol.ts';
 import { MAX_FIELD_CHARS } from '../../shared/protocol.ts';
 import type { PlanFrame } from '../ceoPort.ts';
@@ -20,7 +20,7 @@ import { shareByWindow } from './quota.ts';
 import type { CallEnd, ConverseOptions, ReplyChannel } from './runner.ts';
 import { humanSessions, nextLaunch, reserveBreach } from './scheduler.ts';
 import type { LiveSessionRef } from './scheduler.ts';
-import { weigh } from './spend.ts';
+import { planLimits, weigh } from './spend.ts';
 import type { ClosedSession } from '../state/history.ts';
 
 /**
@@ -197,6 +197,11 @@ export interface PlanDeskOptions {
   stopChair: (provider: ProviderId, reason: string) => void;
   /** The ledger's gate, bound to the limits of now. */
   blockedReason: (provider: ProviderId, now: number) => string | null;
+  /**
+   * The fleets billed by the token: the reserve and the headroom read no
+   * window for them, and the chair is told so. Absent means none.
+   */
+  metered?: readonly ProviderId[];
   /** Mark a job as asking you: the badge pulses, Reports says so. */
   askJob: (jobId: string) => void;
   /** Weighted tokens burned in a window: the denominator that prices a task. */
@@ -263,6 +268,9 @@ function answersIn(plan: Plan): ReadAnswer[] {
 
 export function createPlanDesk(opts: PlanDeskOptions): PlanDesk {
   const now = opts.now ?? (() => Date.now());
+  const metered = opts.metered ?? [];
+  /** The windows this desk's work can burn: see `planLimits`. */
+  const limits = (): readonly ProviderLimits[] => planLimits(opts.snapshot().limits, metered);
   const store: PlanStore = createPlanStore(opts.stateDir, {
     providers: opts.providers, codexModel: opts.codexModel,
   });
@@ -350,8 +358,9 @@ export function createPlanDesk(opts: PlanDeskOptions): PlanDesk {
         root: p.exists ? (opts.cwdOf(p.id) ?? null) : null,
         live: busy.has(p.id),
       })),
-      limits: snap.limits,
+      limits: limits(),
       providers: opts.providers,
+      metered,
       codexModel: opts.codexModel,
       now: now(),
     };
@@ -570,18 +579,17 @@ export function createPlanDesk(opts: PlanDeskOptions): PlanDesk {
     }
     if (weighted === null) return null;
     return shareByWindow(
-      weighted * (SIZE_FACTOR[size] ?? 1), provider, opts.snapshot().limits, opts.weightedSince, t,
+      weighted * (SIZE_FACTOR[size] ?? 1), provider, limits(), opts.weightedSince, t,
     );
   };
 
   const launchNext = (): string | null => {
     const plan = store.get();
     const t = now();
-    const snap = opts.snapshot();
     const decision = nextLaunch({
       plan,
       now: t,
-      limits: snap.limits,
+      limits: limits(),
       live: liveSessions(),
       blockedReason: (p) => opts.blockedReason(p, t),
       expected,
@@ -630,7 +638,7 @@ export function createPlanDesk(opts: PlanDeskOptions): PlanDesk {
     const fleets = new Set<ProviderId>();
     for (const p of plan.projects) for (const task of p.tasks) if (task.status === 'running') fleets.add(task.provider);
     for (const provider of fleets) {
-      const breach = reserveBreach(plan, provider, opts.snapshot().limits, t);
+      const breach = reserveBreach(plan, provider, limits(), t);
       if (!breach) continue;
       stopRunning(`${STOPPED_RESERVE} (${breach})`, provider);
       // Once: the workers take a moment to die, and every tick until then
@@ -772,7 +780,7 @@ export function createPlanDesk(opts: PlanDeskOptions): PlanDesk {
     plan: () => store.get(),
 
     breach(provider, at) {
-      return reserveBreach(store.get(), provider, opts.snapshot().limits, at);
+      return reserveBreach(store.get(), provider, limits(), at);
     },
 
     authorized(order) {

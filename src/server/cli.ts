@@ -1,7 +1,9 @@
 import { parseArgs } from 'node:util';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
-import { buildConfig, capsOf, ConfigError, DEFAULT_PORT, envOf, isOwnState, STATE_DIR_NAME } from './config.ts';
+import {
+  billingLines, buildConfig, capsOf, ConfigError, DEFAULT_PORT, envOf, isOwnState, STATE_DIR_NAME,
+} from './config.ts';
 import type { Config, RawOptions } from './config.ts';
 import * as path from 'node:path';
 import { createHttpServer, listen, clientDirExists, clientDir } from './httpServer.ts';
@@ -907,6 +909,7 @@ async function start(cfg: Config): Promise<number> {
           quotaMaxPercent: cfg.ceoQuotaMaxPercent,
           budgetUsd: cfg.ceoBudgetUsd,
           maxCallUsd: cfg.ceoMaxCallUsd,
+          metered: cfg.ceoMetered,
         },
         snapshot: () => world.snapshot(),
         // The real path comes from the MODEL, never from the client: an id
@@ -967,6 +970,7 @@ async function start(cfg: Config): Promise<number> {
         `  city:      ${c.projects} towers, ${c.sessions} live sessions\n` +
         `  providers: claude${codexEnabled ? ' + codex' : ' (codex not found)'}\n` +
         `  ceo:       ${cfg.ceo ? `on, ${cfg.ceoModel} - stops above ${cfg.ceoQuotaMaxPercent}% quota` : 'off'}\n` +
+        billingLines(cfg, ceoDesk ? ceoProviders : []) +
         // Without the CEOs nothing can be executed: saying EXECUTIVE there
         // would tell someone who chose the observatory the opposite of the truth.
         `  mode:      ${!cfg.ceo ? 'observatory' : cfg.execute ? 'EXECUTIVE' : 'advisor'}\n` +

@@ -10,7 +10,7 @@ import type { WorkOrder } from '../src/server/ceo/fleet.ts';
 import { OUTCOME_FENCE } from '../src/server/ceo/outcome.ts';
 import { shareByWindow } from '../src/server/ceo/quota.ts';
 import type { ClosedSession } from '../src/server/state/history.ts';
-import type { ProjectInfo, ProviderLimits, ServerFrame, Snapshot } from '../src/shared/protocol.ts';
+import type { ProjectInfo, ProviderId, ProviderLimits, ServerFrame, Snapshot } from '../src/shared/protocol.ts';
 
 /*
  * The beat: what a tick launches on its own, and what it learns about the
@@ -68,7 +68,7 @@ interface Rig {
   reply: (f: ServerFrame) => void;
 }
 
-function rig(): Rig {
+function rig(metered: readonly ProviderId[] = []): Rig {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-tick-'));
   const orders: WorkOrder[] = [];
   const stopped: Rig['stopped'] = [];
@@ -101,6 +101,7 @@ function rig(): Rig {
     stop: (jobId, reason) => { stopped.push({ jobId, reason }); return true; },
     stopChair: () => {},
     blockedReason: () => null,
+    metered,
     askJob: () => {},
     weightedSince: () => r.burned!,
     closedSessions: () => r.closed!,
@@ -307,6 +308,27 @@ test('the guard stops the fleet at the reserve and pauses the plan, saying why',
   const reason = r.stopped[0]!.reason;
   r.desk.onJobEnd(a1.id, a1.jobId!, { ok: false, outcome: '', costUsd: 1, reason, at: T0 + 60_000 });
   assert.equal(r.desk.plan().projects[0]!.tasks[0]!.status, 'queued');
+});
+
+test('a fleet on an API key is not held by the reserve of a plan, at launch or while it works', async () => {
+  // The windows are a plan's, burned by your own terminals. For a fleet on
+  // that plan 75% of the 5h holds a 30-point task (the test above) and 99%
+  // stops it mid-flight. Billed by the token, its work spends none of it:
+  // your own afternoon at the terminal used to be able to pause the plan.
+  const r = rig(['claude']);
+  r.closed = [closedRow(200_000), closedRow(400_000), closedRow(3_000_000)];
+  r.burned = 1_000_000;
+  r.snapshot.limits = [limits(75, 10)];
+  await approved(r, 2);
+  assert.equal(r.desk.expected('claude', 'medium'), null, 'no window of its own, so no price in points');
+  // No price in points is an unknown cost: one task of the fleet at a time.
+  assert.deepEqual(r.orders.map((o) => o.summary), ['alpha 1']);
+
+  r.snapshot.limits = [limits(99, 99)];
+  r.desk.guard();
+  assert.equal(r.stopped.length, 0);
+  assert.equal(r.desk.plan().status, 'approved');
+  assert.equal(r.desk.breach('claude', T0), null, 'the fleet outside the plan reads the same answer');
 });
 
 test('a plan with no worker running does not stop itself, whatever the quota says', async () => {

@@ -90,6 +90,16 @@ export interface CeoCaps {
   budgetUsd: number;
   /** Cap on a single call: the call that runs away, not the day's spend. */
   maxCallUsd: number;
+  /**
+   * The tools whose work here is billed by the token (`meteredBy` in
+   * config.ts). Absent means none.
+   *
+   * For these the dollar budget is the cap whatever windows can be read: the
+   * windows are then a plan's, moved by your own terminals and by nothing
+   * started here. Until 2026-10-12 any reading switched the dollar cap off,
+   * so a server on an API key next to terminals on a plan had no cap at all.
+   */
+  metered?: readonly ProviderId[];
 }
 
 export interface CeoDeskOptions {

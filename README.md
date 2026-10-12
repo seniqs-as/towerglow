@@ -28,7 +28,7 @@ unless you start with `--ceo`.
 | Network | None. The server listens on `127.0.0.1` only | Your own `claude` and `codex` CLIs talk to Anthropic and OpenAI, as they do when you use them |
 | Model calls | Never | When you ask something, and the workers you approve |
 | Your projects | Never written. File contents are never read | The CEOs can read your code; workers you approve edit it, commit and push |
-| Your plan's quota | Untouched | Used, within limits you set |
+| Your plan's quota, or API credit | Untouched | Used, within limits you set |
 
 What the observatory reads, shows and stores is in [PRIVACY.md](PRIVACY.md).
 What turning on the CEOs implies, and how to keep it under control, is in
@@ -126,9 +126,11 @@ With `--ceo`, two advisors join the city, one for each tool: you can ask
 them about your sessions and spending (the **Board**), plan work with them in
 a meeting (**Planning**), and read how the accepted work went (**Reports**).
 
-They run through your own `claude` and `codex` command-line tools and their
-login: Towerglow handles no API keys. A model is called only when you ask
-something, or to run work you approved. What you should know first:
+They run through your own `claude` and `codex` command-line tools, on
+whatever those are signed in with: a subscription or an API key (see
+[Subscription or API key](#subscription-or-api-key)). Towerglow itself never
+stores or sends a credential. A model is called only when you ask something,
+or to run work you approved. What you should know first:
 
 - **The model provider sees your code.** The CEOs can read the projects in
   the city, and workers work on them directly.
@@ -142,7 +144,7 @@ something, or to run work you approved. What you should know first:
   push is ticked.
 - **It uses your quota.** A reserve, a cap on each CEO call and a quota
   ceiling keep it in bounds, but workers are real sessions and cost what a
-  session costs.
+  session costs. On an API key it spends money instead, behind fewer guards.
 
 The CEOs need Claude Code 2.1.285 or newer and/or Codex; on Linux the
 workers' sandbox also needs `bubblewrap` and `socat`. To try them as advisors
@@ -154,6 +156,44 @@ node bin/towerglow.mjs start --ceo --no-execute
 
 Everything else, including what each process is allowed to do, is in
 [docs/ceo-mode.md](docs/ceo-mode.md).
+
+### Subscription or API key
+
+The observatory needs neither: it calls no model, and shows your sessions
+however they are paid for.
+
+The CEOs work with both. Towerglow starts your own `claude` and `codex` and
+hands them its environment, so they use what they would use in your
+terminal: your plan's login, or an API key when one is set
+(`ANTHROPIC_API_KEY` for Claude Code, `CODEX_API_KEY` for Codex). A key pays
+for everything Towerglow starts, the CEOs' answers as much as the workers:
+there is no setting for the workers alone. Towerglow sees that the variable
+is set, says so when it starts, and caps that tool in dollars instead of by
+your plan's quota.
+
+**For the tasks of an approved plan, we suggest an API key.** Asking a CEO a
+question is you using the tool. A plan's tasks start one after another with
+nobody at the keyboard, which is closer to automation, and both vendors
+point automation at API keys:
+
+- **Anthropic** lets `claude -p` run on a plan and counts it against the
+  plan's limits, but describes plan login as "designed to support ordinary
+  use of Claude Code", with limits that "assume ordinary, individual usage".
+  Its Consumer Terms allow automated access only with an API key, or where
+  Anthropic explicitly permits it. See
+  [Claude Code: legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)
+  and the [Consumer Terms](https://www.anthropic.com/legal/consumer-terms).
+- **OpenAI** lets `codex exec` run on a ChatGPT login, and its documentation
+  says that "API keys are still the recommended default for automation". See
+  [Codex: authentication](https://developers.openai.com/codex/auth).
+
+Neither page says where a queue of unattended workers stops being ordinary
+use: that is the vendor's call, not ours. This is how we read those pages on
+12 October 2026, not legal advice, and terms change, so read them for your
+own case. An API key also bills by the token, and the spending guards are
+fewer on one: read
+[Subscription or API key](docs/ceo-mode.md#subscription-or-api-key) before
+you set it.
 
 ## Development
 

@@ -138,6 +138,10 @@ OpenAI, under the terms you accepted when you started using them:
   work on directly;
 - in a planning meeting, your notes and any files you attach, in full.
 
+Towerglow itself handles no credential. With `--ceo` it checks whether an
+API-key variable is set in its environment, to choose which spending guard
+applies, and never stores, shows or sends its value.
+
 They also store their plans, decisions and the outcome of each job under
 `~/.towerglow/ceo/`, and the CLIs keep their own transcripts as usual. The
 full picture, including what each process may do, is in

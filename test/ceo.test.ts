@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { createSpendLedger, tightestWindow, weigh } from '../src/server/ceo/spend.ts';
+import { createSpendLedger, planLimits, tightestWindow, weigh } from '../src/server/ceo/spend.ts';
 import { quotaShare } from '../src/server/ceo/quota.ts';
 import type { SpendCaps } from '../src/server/ceo/spend.ts';
 import { buildBrief, MAX_BRIEF_CHARS, perimeterOf, readableRoot } from '../src/server/ceo/brief.ts';
@@ -130,6 +130,35 @@ test('on a subscription the quota is the cap: list-price dollars do not lock the
   assert.match(led.blockedReason('codex', limits('claude', 10, 33), T0) ?? '', /USD/, 'codex has no reading here');
   led.record('codex', 5, T0);
   assert.match(led.blockedReason('codex', limits('claude', 10, 33), T0) ?? '', /spent .* USD in the last 24h/);
+});
+
+test('a tool on an API key is capped in dollars even while the windows of a plan can be read', () => {
+  // 2026-10-12, found reading the code before the README recommended an API
+  // key for planned work: with your terminals on a plan and the server
+  // started with a key, the status line kept feeding the plan's windows, any
+  // window switched the dollar cap off, and the keyed work had no cap at all.
+  const led = createSpendLedger(tmp(), { ...CAPS, metered: ['claude'] });
+  led.record('claude', 2.5, T0);
+  assert.match(led.blockedReason('claude', limits('claude', 10, 33), T0) ?? '', /spent 2\.50 USD in the last 24h/);
+  // The same ledger on a plan: the same reading is a subscription's, and the
+  // dollars are a list price that stops nobody.
+  const plan = createSpendLedger(tmp(), CAPS);
+  plan.record('claude', 2.5, T0);
+  assert.equal(plan.blockedReason('claude', limits('claude', 10, 33), T0), null);
+});
+
+test('a plan window over the quota cap does not stop a tool on an API key, and still stops the other', () => {
+  // The window is your terminals' doing: nothing the keyed tool starts moves
+  // it, so holding its work there would hold nothing.
+  const led = createSpendLedger(tmp(), { ...CAPS, metered: ['claude'] });
+  assert.equal(led.blockedReason('claude', limits('claude', 95, 90), T0), null);
+  assert.match(led.blockedReason('codex', limits('codex', 95), T0) ?? '', /quota at 95%/);
+});
+
+test('the windows of a tool on an API key are not a gate to read; the other tool keeps its own', () => {
+  const both = [...limits('claude', 50, 50), ...limits('codex', 60, 60)];
+  assert.deepEqual(planLimits(both, ['claude']).map((l) => l.provider), ['codex']);
+  assert.equal(planLimits(both), both, 'with no metered tool the reading is untouched');
 });
 
 test('spend survives a restart: a cap that resets is not a cap', () => {

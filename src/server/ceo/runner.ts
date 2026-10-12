@@ -131,6 +131,11 @@ export interface CeoRunnerOptions {
   memory: () => readonly BriefNote[];
   /** The weighted tokens burned in a window: the denominator of the quota. */
   weightedSince: (provider: ProviderId, since: number, now: number) => number;
+  /**
+   * This tool is billed by the token here. A call then burns no usage window,
+   * so it has no share of one: the dollars it declares are the cost.
+   */
+  metered?: boolean;
   /** A state change to send to everyone: it is a fact of the world. */
   onState: (event: Extract<DeltaEvent, { t: 'ceo' }>) => void;
   /** An analysis that finished. The desk turns it into `report` and `proposal`. */
@@ -819,6 +824,8 @@ export class CeoRunner {
 
   /** How much it weighs on your subscription rate. `null` when there is no history to tell. */
   #share(weighted: number): QuotaShare | null {
+    // The windows on screen are a plan's, and this call did not touch them.
+    if (this.#opts.metered) return null;
     return quotaShare(
       weighted,
       this.#opts.provider,

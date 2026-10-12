@@ -134,6 +134,25 @@ export function tightestWindow(
   return worst;
 }
 
+/**
+ * The usage windows that work started here can burn.
+ *
+ * None, for a tool billed by the token: whatever windows are known for it
+ * belong to a plan your own terminals are on, and nothing this module starts
+ * moves them. Every gate built on a window -- the quota ceiling, the reserve,
+ * the headroom of a planned task, the share a call is priced as -- reads its
+ * limits through here, so a metered tool looks to all of them like one with
+ * no reading. Holding its workers on your plan's reserve would stop work that
+ * was not spending it, and letting its windows stand in for a subscription is
+ * what left the dollar cap off.
+ */
+export function planLimits(
+  limits: readonly ProviderLimits[],
+  metered: readonly ProviderId[] = [],
+): readonly ProviderLimits[] {
+  return metered.length === 0 ? limits : limits.filter((l) => !metered.includes(l.provider));
+}
+
 export function createSpendLedger(stateDir: string, caps: SpendCaps): SpendLedger {
   const dir = path.join(stateDir, 'ceo');
   const file = path.join(dir, 'spend.json');
@@ -187,14 +206,16 @@ export function createSpendLedger(stateDir: string, caps: SpendCaps): SpendLedge
 
   return {
     blockedReason(provider, limits, now) {
-      const window = tightestWindow(provider, limits, now);
+      // A metered tool has no window of its own: see `planLimits`.
+      const window = tightestWindow(provider, planLimits(limits, caps.metered), now);
       if (window && window.usedPercent >= caps.quotaMaxPercent) {
         return `${window.label} quota at ${Math.round(window.usedPercent)}%, over the ${caps.quotaMaxPercent}% cap`;
       }
 
-      // A quota reading means a subscription: the quota is the cap, and the
-      // dollars in the ledger are a list-price equivalent, not money spent.
-      // The dollar cap is for API keys, which report no windows. Measured on
+      // A quota reading means a subscription, unless the tool is known to
+      // be metered: the quota is the cap, and the dollars in the ledger are a
+      // list-price equivalent, not money spent. The dollar cap is for API
+      // keys, which report no windows of their own. Measured on
       // 2026-09-19: three planned workers, $107 of list price for 5h at
       // 80%, locked the planner, the meeting and the CEOs for a whole day
       // behind a $10 cap, with the quota back at 10%.

@@ -84,7 +84,9 @@ create it by hand with the full address.
 
 With `--ceo` the banner also says which model the CEOs use, the quota ceiling,
 and whether accepted work starts (`mode: EXECUTIVE`) or not (`mode: advisor`,
-with `--no-execute`).
+with `--no-execute`). A `billing:` line appears for each tool that an API key
+in your environment puts on pay-as-you-go billing: see
+[Subscription or API key](ceo-mode.md#subscription-or-api-key).
 
 ## Stop and restart
 
@@ -141,7 +143,7 @@ and how many live Claude Code sessions it finds.
 | `--ceo-codex-model <model>` | your Codex default | Codex's model |
 | `--ceo-quota-max <pct>` | `85` | No CEO call or new worker above this usage |
 | `--ceo-max-call <usd>` | `2.00` | Cap on a single CEO call, enforced while it runs |
-| `--ceo-budget <usd>` | `10.00` | 24-hour cap, for API-key users |
+| `--ceo-budget <usd>` | `10.00` | 24-hour cap, for a tool on an API key |
 | `--ceo-every <time>` | `30s` | How often the planner checks the plan (minimum `10s`) |
 | `--no-notify` | | With `--ceo`: no macOS notification when a plan stops |
 

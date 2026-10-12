@@ -127,6 +127,7 @@ export function createCeoDesk(opts: CeoDeskOptions): CeoDesk {
     launch: (order) => fleet.launch(order),
     stop: (jobId, reason) => fleet.stop({ id: jobId, kind: 'work' }, reason),
     blockedReason: (provider, now) => ledger.blockedReason(provider, opts.snapshot().limits, now),
+    ...(opts.caps.metered ? { metered: opts.caps.metered } : {}),
     askJob: (jobId) => postJob(jobs.ask(jobId)),
     weightedSince: opts.weightedSince,
     closedSessions: opts.closedSessions,
@@ -560,6 +561,7 @@ export function createCeoDesk(opts: CeoDeskOptions): CeoDesk {
           return memory.list(provider);
         },
         weightedSince: opts.weightedSince,
+        metered: opts.caps.metered?.includes(provider) ?? false,
         onState: (ev) => opts.broadcast([ev]),
         onResult: (result) => publish(provider, result),
         onQuota: (windows) => noteQuota(provider, windows),

@@ -105,6 +105,8 @@ export interface MeetingContext {
   projects: readonly MeetingProject[];
   limits: readonly ProviderLimits[];
   providers: readonly ProviderId[];
+  /** The fleets billed by the token here: no window to plan around, no reserve. */
+  metered: readonly ProviderId[];
   codexModel: string | null;
   now: number;
 }
@@ -130,6 +132,12 @@ function projectsSection(ctx: MeetingContext): string {
 function quotaSection(plan: Plan, ctx: MeetingContext): string {
   const lines: string[] = [];
   for (const p of ctx.providers) {
+    // "No quota reading yet" would have the chair wait for one that never
+    // comes, and a reserve it would plan around holds nothing here.
+    if (ctx.metered.includes(p)) {
+      lines.push(`- ${p}: billed by the token, not on a plan · no quota window and no reserve apply`);
+      continue;
+    }
     const mine = ctx.limits.find((l) => l.provider === p);
     const reserve: Reserve = plan.reserve[p] ?? { '5h': 0, '7d': 0 };
     if (!mine || mine.windows.length === 0) {
