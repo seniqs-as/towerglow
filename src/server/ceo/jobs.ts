@@ -183,6 +183,14 @@ export interface Job {
   plan: PlanRef | null;
   /** The worker stopped to ask you something. Its question is on the plan; here is the flag. */
   asks: boolean;
+  /**
+   * You erased this job's outcome (the measure), and it must not come back.
+   *
+   * `effect: null` alone means "not frozen yet", and the next refresh would
+   * freeze it again from the history. Additive: a ledger written before it
+   * existed loads as false.
+   */
+  effectCleared: boolean;
 }
 
 export type NewJob = Pick<Job, 'id' | 'at' | 'provider' | 'kind' | 'summary' | 'projectId' | 'projectName'>
@@ -256,6 +264,16 @@ export interface JobStore {
    * The rest is written to `archive/` first. Returns the ids that stayed.
    */
   clear(now: number): string[];
+  /**
+   * Erase one job for good. A running job is refused (a process works for
+   * it); so is an id the ledger does not hold -- the id is only ever a map
+   * key, never a path. Returns whether something went.
+   */
+  remove(id: string): boolean;
+  /** Erase the measure of one job, keeping the job. Marks it so it is not retaken. */
+  clearEffect(id: string): Job | undefined;
+  /** Erase every measure. Returns the ids of the jobs that had one. */
+  clearEffects(): string[];
   save(): void;
 }
 
@@ -399,6 +417,7 @@ export function createJobStore(stateDir: string): JobStore {
           effect: j.effect ?? null,
           plan: j.plan ?? null,
           asks: j.asks === true,
+          effectCleared: j.effectCleared === true,
         });
       }
     }
@@ -448,6 +467,7 @@ export function createJobStore(stateDir: string): JobStore {
         effect: null,
         plan: j.plan ?? null,
         asks: false,
+        effectCleared: false,
       };
       byId.set(full.id, full);
       dirty = true;
@@ -492,7 +512,7 @@ export function createJobStore(stateDir: string): JobStore {
       // thinned out in the meantime -- history keeps thirty days -- would say
       // the "before" has changed, and a before that changes is not a before.
       // Same rule as `finish`, where the first closing wins.
-      if (j.effect) return j;
+      if (j.effect || j.effectCleared) return j;
       const next: Job = { ...j, effect: record };
       byId.set(id, next);
       dirty = true;
@@ -573,6 +593,34 @@ export function createJobStore(stateDir: string): JobStore {
         dirty = true;
       }
       return [...byId.keys()];
+    },
+
+    remove(id) {
+      const j = byId.get(id);
+      if (!j || stateOf(j) === 'running') return false;
+      byId.delete(id);
+      dirty = true;
+      return true;
+    },
+
+    clearEffect(id) {
+      const j = byId.get(id);
+      if (!j || stateOf(j) === 'running') return undefined;
+      const next: Job = { ...j, effect: null, effectCleared: true };
+      byId.set(id, next);
+      dirty = true;
+      return next;
+    },
+
+    clearEffects() {
+      const cleared: string[] = [];
+      for (const j of [...byId.values()]) {
+        if (!j.effect || stateOf(j) === 'running') continue;
+        byId.set(j.id, { ...j, effect: null, effectCleared: true });
+        cleared.push(j.id);
+      }
+      if (cleared.length > 0) dirty = true;
+      return cleared;
     },
 
     save() {

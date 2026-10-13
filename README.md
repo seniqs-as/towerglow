@@ -31,7 +31,7 @@ unless you start with `--ceo`.
 
 | | Observatory (default) | With the CEOs (`--ceo`) |
 | --- | --- | --- |
-| Network | None. The server listens on `127.0.0.1` only | Your own `claude` and `codex` CLIs talk to Anthropic and OpenAI, as they do when you use them |
+| Network | None. The server listens on `127.0.0.1` only | Your own `claude` and `codex` CLIs talk to Anthropic and OpenAI, as they do when you use them. Workers reach your git remote where you tick push, and the web where you tick web |
 | Model calls | Never | When you ask something, and the workers you approve |
 | Your projects | Never written. File contents are never read | The CEOs can read your code; workers you approve edit it, commit and push |
 | Your plan's quota, or API credit | Untouched | Used, within limits you set |
@@ -63,7 +63,10 @@ you.
    has no usage windows: the cap there is an amount in dollars per 24 hours,
    `--ceo-budget`, set when you start.
 4. **Approve.** You read every briefing first, and decide for each project
-   whether its worker may commit and push. Nothing starts before your yes.
+   whether its worker may commit, push and read the web (the web is off until
+   you tick it). For each task you can change the tool, the model and the
+   effort: how hard the model thinks, which is the tool's own default until
+   you raise or lower it. Nothing starts before your yes.
 5. **It runs.** Towerglow starts the tasks itself, in your order: one worker
    per project, up to two projects at a time (you can set one to four), the
    next task as soon as one ends. It paces itself on your quota: a task that
@@ -76,7 +79,9 @@ It stops for you only where it has to:
 - A worker that still has a question stops and asks it in the panel. Only its
   project waits, the others go on, and your answer resumes the same session.
 - A task that fails, or runs past its time limit (15 to 60 minutes, by its
-  size), stops the queue of its project. Nothing is retried on its own.
+  size), stops the queue of its project. Nothing is retried on its own. The
+  worker is told its limit, and to run only the part of a long test suite
+  that covers its change, saying what it left out.
 - A task that reaches what you kept free while it runs is stopped, waits for
   the usage window to have room, and starts again on its own in the same
   session. If that happens to the same task twice in a row, it stops
@@ -120,6 +125,9 @@ it did, how long it took, its tool calls and its cost.
   in Planning, and it doubles the cost.
 - *session log* opens a terminal window with everything the session did, and
   *open* shows each document the worker wrote. Both are for macOS.
+- *delete* erases that job for good, after a second click. A job still
+  running cannot be deleted. *start over* erases every finished job at once
+  (a copy goes to `~/.towerglow/ceo/archive/`).
 
 **Outcomes: what it changed.** A job that got done and a job that helped are
 two different facts. For each job this panel compares your sessions in that
@@ -130,7 +138,9 @@ with at least three sessions on each side (until then it says how many are
 missing), and a change under 15% is not called better or worse. You can then
 *ask the CEO what else could explain this*: it is asked to find another
 cause for the change, not to take the credit, and the answer says whether it
-could.
+could. *delete* erases one outcome and *delete all* every outcome, each after
+a second click; the jobs stay in Reports and an erased outcome is not measured
+again.
 
 ## Quick start
 
@@ -182,7 +192,9 @@ arrows) and the planning panel opens; **E** or the hatch takes you back out.
 
 The legend button explains every colour and sign of the view on screen; the
 settings button holds the tower spacing, the quality presets, the planet and
-the sky. On macOS, clicking a session brings its terminal window to the front.
+the sky. On macOS, clicking a session brings its terminal window to the front;
+a worker of the CEOs has no window of its own, so the click opens one that
+follows what it is doing, read-only.
 
 ## Privacy in short
 
@@ -239,9 +251,15 @@ or to run work you approved. What you should know first:
   project, before approving a plan, and you see everything a worker will be
   told before you say yes.
 - **Workers are sandboxed.** Each Claude worker runs in Claude Code's OS
-  sandbox: its commands write only in the project, cannot read your
-  credentials and reach no network, except `git push` and `git pull` when
-  push is ticked.
+  sandbox: its commands write only in the project, cannot read a fixed list
+  of credential folders (`~/.ssh`, `~/.aws` and the like) and reach no
+  network, except `git fetch`, `git pull` and `git push` when push is ticked.
+  Inside the project they run without asking, and can change or delete files
+  there. A worker reads the web only where you ticked web for its project.
+- **The sandbox stops writes and the network, not reads.** A worker's
+  commands can read other files on your disk, including a credential kept
+  outside those folders, such as a token in `~/.npmrc` or a `.env` file of
+  another project.
 - **It uses your quota.** A reserve, a cap on each CEO call and a quota
   ceiling keep it in bounds, but workers are real sessions and cost what a
   session costs. On an API key it spends money instead, behind fewer guards.
@@ -303,12 +321,13 @@ npm run typecheck      # server and client
 npm run check:deps     # the runtime dependency tree must be exactly {ws}
 npm run check:bundle   # the client bundle must contain no way out to the network
 npm run check:passive  # the server must build without src/server/ceo/
+npm run probe:worker   # a worker's rules, tried on the real claude (calls the model: a few cents)
 ```
 
 The server is Node with a single runtime dependency, `ws`; the client is
 three.js, bundled with Vite. The CEO module lives entirely in
-`src/server/ceo/` plus four panels in `src/client/ui/`, and the observatory
-builds and runs without it.
+`src/server/ceo/` plus four panels in `src/client/ui/` and the probe in
+`scripts/`, and the observatory builds and runs without it.
 
 ## Security
 

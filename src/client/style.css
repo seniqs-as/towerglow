@@ -2230,7 +2230,7 @@ body.is-inside .empty { display: none; }
 }
 .planning__tneeds .planning__btn { margin-left: auto; }
 
-/* What a worker may run to test the project: chips, a cross, a field. */
+/* The project's own checks: chips, a cross, a field. */
 .planning__cmds { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 2px 0 6px; font-size: 10px; }
 .planning__cmdslabel { color: #7f9ab0; letter-spacing: 0.06em; cursor: help; }
 .planning__cmd { display: inline-flex; align-items: center; gap: 2px; }
@@ -2357,6 +2357,31 @@ body.is-inside .empty { display: none; }
 .reports__restart:hover { background: rgba(255, 255, 255, 0.06); color: #dceaf7; }
 .boardroom__restart[data-armed='true'],
 .reports__restart[data-armed='true'] { border-color: #ff8f7a; color: #ff8f7a; }
+
+/* Erase one job / one outcome / every outcome: the same quiet button, red once armed. */
+.reports__del,
+.effect__del,
+.effect__restart {
+  padding: 4px 9px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #7f9ab0;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.reports__del[hidden] { display: none; }
+.effect__del { margin-left: auto; }
+.effect__foot { display: flex; justify-content: flex-end; margin-top: 8px; }
+.reports__del:hover,
+.effect__del:hover,
+.effect__restart:hover { background: rgba(255, 255, 255, 0.06); color: #dceaf7; }
+.reports__del[data-armed='true'],
+.effect__del[data-armed='true'],
+.effect__restart[data-armed='true'] { border-color: #ff8f7a; color: #ff8f7a; }
 
 .reports__row {
   padding: 9px 0;

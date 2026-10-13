@@ -136,7 +136,19 @@ OpenAI, under the terms you accepted when you started using them:
   quota, history, the most-touched file paths);
 - the code of your projects, which the advisors can read, and that workers
   work on directly;
-- in a planning meeting, your notes and any files you attach, in full.
+- in a planning meeting, your notes and any files you attach, in full;
+- the notes Claude Code keeps for a project (its memory folder), when a worker
+  of that project opens them;
+- for a project where you ticked web: what its worker searches for and the
+  pages it reads. The sites it opens receive the request from your machine;
+- whatever else a worker reads. Its commands cannot read the folders listed
+  in [docs/ceo-mode.md](docs/ceo-mode.md#the-sandbox) (the usual credential
+  folders, your other sessions), but they can read other files your user can
+  read.
+
+To write a worker's rules, Towerglow lists the names of the folders in
+`~/.claude/projects` and looks whether the project has a notes folder. It
+opens no file there.
 
 Towerglow itself handles no credential. With `--ceo` it checks whether an
 API-key variable is set in its environment, to choose which spending guard

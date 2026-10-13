@@ -40,6 +40,39 @@ test('a session with a tty of its own finds its application', () => {
   assert.deepEqual(terminalOf(REAL, 47539), { tty: 'ttys003', app: 'Terminal' });
 });
 
+/*
+ * The same chain with the server started from a terminal window, which is how
+ * it is started by hand. `ps` prints the CONTROLLING terminal, and a child
+ * with three pipes keeps its parent's: measured on 2026-10-13, a child spawned
+ * with `stdio: pipe` by a node on ttys003 is listed on ttys003 too.
+ */
+const FOREGROUND = table(
+  [61020, 61001, 'ttys005', 'claude'],                  // a planned task's worker
+  [61044, 61020, 'ttys005', '/bin/zsh'],                // a command it is running
+  [61001, 60990, 'ttys005', 'node'],                    // the towerglow server
+  [60990, 60989, 'ttys005', '-bash'],
+  [60989, 20158, 'ttys005', 'login'],
+  [52210, 52209, 'ttys002', 'claude'],                  // a session of yours, elsewhere
+  [52209, 52208, 'ttys002', '-bash'],
+  [52208, 20158, 'ttys002', 'login'],
+  [20158, 1, '??', '/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal'],
+);
+
+test('a worker of a server started from a terminal does not own that terminal', () => {
+  // The observed bug: with a plan running, a click on a working tower brought
+  // forward the window with the server's banner instead of opening the view
+  // of what the session was doing. The worker shows the server's tty.
+  assert.equal(terminalOf(FOREGROUND, 61020, 61001), null);
+  assert.equal(terminalOf(FOREGROUND, 61044, 61001), null, 'nor does anything the worker starts');
+  assert.equal(terminalOf(FOREGROUND, 61001, 61001), null, 'the server is not a session to bring forward');
+});
+
+test('a session the server did not start keeps its terminal, whatever the server runs on', () => {
+  assert.deepEqual(terminalOf(FOREGROUND, 52210, 61001), { tty: 'ttys002', app: 'Terminal' });
+  // The shell the server was started from is its parent, not its child.
+  assert.deepEqual(terminalOf(FOREGROUND, 60990, 61001), { tty: 'ttys005', app: 'Terminal' });
+});
+
 test('a pid that no longer exists has no terminal', () => {
   assert.equal(terminalOf(REAL, 99999), null);
 });

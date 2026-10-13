@@ -376,7 +376,8 @@ export function createEffects(deps: EffectDeps): Effects {
   const noted = new Map<string, string>();
 
   function freeze(job: Job, now: number): void {
-    if (job.effect) return;
+    // An outcome you erased is not retaken from the history.
+    if (job.effect || job.effectCleared) return;
 
     /*
      * Late is late, and it is said instead of taking a bad snapshot.

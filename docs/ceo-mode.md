@@ -18,9 +18,13 @@ see what the observatory sees, and they work through four panels:
   tasks per project, each with a briefing. Once you approve the plan,
   Towerglow runs its tasks, one project at a time.
 - **Reports**: every piece of work you accepted, with what the worker did, a
-  second opinion on it, and the full log.
+  second opinion on it, and the full log. *delete* erases one job for good
+  (two clicks; a running job cannot be deleted); *start over* erases all the
+  finished ones, keeping a copy in `archive/`.
 - **Outcomes**: how a project went in the weeks after a job, with the numbers
-  before and after, and a judgement you can ask the CEO for.
+  before and after, and a judgement you can ask the CEO for. *delete* erases
+  one outcome and *delete all* every outcome (two clicks each): the jobs stay
+  in Reports, and an erased outcome is not measured again.
 
 In the colony they sit at a desk inside the ship (**E** walks you in), and
 the workers they start appear on their project's plot like your own sessions.
@@ -62,6 +66,16 @@ session that uses your quota. An approved plan stays approved across
 restarts: if you start again with `--ceo`, its queued tasks resume. **Pause**
 in the planning panel stops them.
 
+Each task of a plan runs on the tool, the model and the effort shown on its
+row in the planning panel, and you can change all three while the task is
+still queued. The chair proposes the tool and the model, and for a Codex task
+the effort. For a Claude task the effort is yours to set: left alone, nothing
+is passed and Claude Code uses its own default; otherwise Towerglow passes
+`low`, `medium`, `high`, `xhigh` or `max` with `--effort`. A higher effort
+thinks longer and uses more of your quota. The cost a task is expected to
+have, which the reserve works with, is learned from finished tasks of the
+same size and does not know about the effort.
+
 ## What the model provider sees
 
 Through your CLIs, Anthropic and OpenAI receive:
@@ -80,7 +94,12 @@ Through your CLIs, Anthropic and OpenAI receive:
   folders the Claude CEO is given.
 - **In a planning meeting**: your notes, the full text of any files you attach
   (up to 8 files of 64 KiB), and the folder path of each project.
-- **Workers** receive their briefing and work on the code directly. A second
+- **Workers** receive their briefing and work on the code directly. A Claude
+  worker can also open the notes Claude Code keeps for that project (its
+  memory folder, whose index Claude Code gives to every session there), and
+  with web ticked what it searches for and the pages it reads are sent as
+  well. So is anything else its commands read: see
+  [The sandbox](#the-sandbox) for what they can and cannot open. A second
   opinion either continues from a copy of the session that worked in the
   project (so that session's context is processed again) or starts a fresh
   read-only session there.
@@ -94,31 +113,43 @@ No process is started with a permission bypass: no
 | Process | Edits files | Runs commands | Network |
 | --- | --- | --- | --- |
 | A CEO answering, the meeting chair, the Outcomes judge | No. Claude: editing tools denied. Codex: read-only sandbox | No. Claude: shell denied. Codex: read-only sandbox | Claude: web tools denied |
-| Worker for an accepted **Board proposal** | Yes, in the project (Claude: `acceptEdits` mode; Codex: workspace-write sandbox) | Claude: only the allow-list below, with commit and push off, inside the OS sandbox; anything else fails at once instead of waiting for an approval. Codex: within its sandbox | None: the sandbox gives the shell no network, and the web tools are denied. Codex: off |
-| Worker for a **planned task** | Yes, in the project | Claude: only the allow-list below, with the git boxes you ticked, inside the OS sandbox. Codex: within its sandbox | Claude: none, except `git push` and `git pull` when push is ticked. Codex: on when push is ticked |
+| Worker for an accepted **Board proposal** | Yes, in the project (Claude: `acceptEdits` mode; Codex: workspace-write sandbox) | Claude: any command, inside the OS sandbox, with commit and push off; what a rule denies fails at once instead of waiting for an approval. Codex: within its sandbox | None: the sandbox gives the shell no network, and the web tools are denied. Codex: off |
+| Worker for a **planned task** | Yes, in the project | Claude: any command, inside the OS sandbox, with the git boxes you ticked. Codex: within its sandbox | Claude: none for the shell, except `git fetch`, `git pull` and `git push` when push is ticked; the WebSearch and WebFetch tools when web is ticked. Codex: on when push or web is ticked |
 | Second opinion | No. Claude: plan mode. Codex: read-only sandbox | No | Not granted by Towerglow |
 
-The allow-list of a worker (for a planned task you can read and edit it in
-the planning panel):
+Inside its sandbox a Claude worker's shell commands run without waiting for
+a permission. The boundary is what the operating system lets a command reach,
+not a list of commands: a list cannot be one, because `npm run` and `npx` run
+whatever scripts they are given, and a worker can edit `package.json` or a
+`Makefile` before running them. Nobody is there to answer a prompt while a
+plan runs, so a command a list left out was a task stopped to ask for it.
 
-- common test runners: `npm test`, `npm run`, `npx`, `node --test`,
-  `node --check`, `pytest`, `cargo test`, `go test`, `make test`, `php -l`,
-  `composer test`, `phpunit`;
-- the project's own commands, proposed by the chair from the repository or
-  added by you. Commands that would open everything are refused: shell
+Rules still decide four things:
+
+- **git**, by the boxes you ticked. With commit unticked, `git add`,
+  `git commit` and `git init` are denied by name, and the shell cannot write
+  in the project's `.git` folder: no command can commit, stash or move a
+  branch, whatever it is called. With push unticked, `git push` is denied by
+  name and there is no network to push with. A worker from a Board proposal
+  never commits or pushes. Codex has no per-command rules: for its worker
+  "no commit" is an instruction in the prompt, and without push its sandbox
+  has no network.
+- **what runs outside the sandbox**: `git fetch`, `git pull` and `git push`,
+  only with push ticked, and only when one of them is the whole command (see
+  below).
+- **the web**, by the web box of each project, which is off until you tick
+  it. With it a Claude worker may use Claude Code's WebSearch and WebFetch
+  tools; its shell still reaches no host, so a command cannot download
+  anything. Codex has one switch: with web, as with push, its sandbox has the
+  network. A worker from a Board proposal never has the web.
+- **the project's commands** in the planning panel, proposed by the chair
+  from the repository or added by you. A worker is told to run them as the
+  project's tests and checks. They are not what it is limited to; they are
+  kept as permissions for the few calls Claude Code does not approve on its
+  own inside the sandbox, such as a command run through its Monitor tool.
+  Commands that would open everything are refused there: shell
   operators, `sudo`, `rm`, `curl`, `ssh`, `git` itself, inline code
-  (`node -e`, `python -c`) and the like;
-- git: `status`, `diff` and `log` always, since they only read; `pull`,
-  `add` and `commit` when commit is ticked; `push` only when push is ticked.
-  A worker from a Board proposal never commits or pushes: for Claude the
-  commands are denied by name; Codex has no per-command rules, so for its
-  worker the prompt says it, and its sandbox has no network to push with.
-
-The list decides what may start, not what it can reach: `npm run` and `npx`
-run whatever scripts and packages they are given, and a worker can edit
-`package.json` or a `Makefile` before running them. Claude Code also approves
-read-only commands such as `ls`, `cat` or `date` on its own. What a command
-can reach is the sandbox's to decide.
+  (`node -e`, `python -c`) and the like.
 
 ### The sandbox
 
@@ -130,21 +161,60 @@ bubblewrap on Linux), which Towerglow turns on for each one:
 - they cannot read credential folders (`~/.ssh`, `~/.aws`, `~/.gnupg`,
   `~/.config/gh`, `~/.netrc`, `~/.docker`, `~/.kube`), nor Towerglow's,
   Codex's or your other sessions' data. The Read tool, which lives outside
-  the sandbox, is denied the same paths, and the web tools are denied;
+  the sandbox, is denied the same paths, and the web tools are denied unless
+  you ticked web;
+- those folders are all the sandbox closes for reading. A worker's commands
+  can read whatever else your user can read, as a program you run yourself
+  could: your home folder, your other projects, your documents, and a
+  credential kept outside that list, such as a token in `~/.npmrc` or a
+  `.env` file of another project. They cannot write there, and without push
+  or web they have no network to send it with. Claude's Read tool is
+  narrower: outside the project it is refused;
+- of everything under `~/.claude/projects` a worker reads one folder: the
+  notes Claude Code keeps for its own project. The transcripts of every
+  session, the files beside them and the other projects' notes stay denied,
+  and no note can be written: a note is loaded into every later session of
+  that project, yours included. Where the rules for this cannot be written
+  exactly, such as a project folder named with unusual characters, the whole
+  of `~/.claude/projects` stays denied, notes included;
 - the model cannot ask to run a command outside the sandbox, and a
   repository's own Claude settings cannot open exceptions;
 - if the sandbox cannot start, the worker does not start, rather than running
   without it.
 
-With push ticked, `git push` and `git pull` run outside the sandbox: they need
-your SSH keys and the network. So a worker manipulated into editing
-`package.json` and running it can change the project, but cannot leave it or
-reach the network, unless you ticked push and it uses `git` to do so.
+With push ticked, `git fetch`, `git pull` and `git push` run outside the
+sandbox: they need your SSH keys and the network. That holds only when one of
+them is the whole command. Chained to another command, piped, or run with
+`cd` or `git -C`, it stays inside, where it has no network and fails; the
+worker is told to run them on their own. So a worker manipulated into editing
+`package.json` and running it can change the project, but cannot write
+outside it or reach the network, unless you ticked push and it uses `git` to
+do so, or you ticked web.
 
-This was checked with the real `claude`, not only in tests: inside the
-sandbox a request to the network failed, a write to the home folder failed, a
-write in the project succeeded, reading `~/.ssh` failed, an interpreter not on
-the list was refused, and with push ticked a `git push` went through.
+Inside the project the shell can do what a command can do: create, rewrite
+and delete files. It cannot write git's hooks or its configuration
+(`.git/hooks`, `.git/config`), ticked or not.
+
+This was checked with the real `claude` on macOS, not only in tests. Inside
+the sandbox a request to the network failed, a request to a server on
+localhost failed, a write to the home folder failed, reading `~/.ssh` failed,
+a write to `.git/hooks` failed, and a file created in the project was deleted
+again. An interpreter and a pipeline ran without a permission. With push
+ticked a `git push` and a `git fetch` on their own reached the remote, and a
+`git fetch` piped into another command did not. With commit unticked
+`git add` and `git commit` were refused, and a script that tried to move a
+git reference could not write it. A worker read a note of its own project
+with the Read tool and with a command; a transcript, a file in a session's
+folder, another project's notes and a write to its own notes were all
+refused. With web ticked a page was fetched, and the same address from the
+shell was still refused. A command read a file in the home folder, outside
+the project, which is the limit said above, and the Read tool was refused a
+file outside the project.
+
+You can repeat that check on your own machine: `npm run probe:worker` starts
+two short sessions with a worker's rules, asks them for steps that change
+nothing, and compares what happened with what this page says. It calls the
+model, so it costs a few cents of your plan.
 
 No MCP server of yours is loaded in the CEOs, the second opinions or the
 workers: they run outside the sandbox.
@@ -178,7 +248,15 @@ workers: they run outside the sandbox.
 - **A worker that needs something stops and asks.** A question becomes a
   card in the panel, and your answer resumes the same session. A command it
   was refused is listed, and "allow and resume" adds it to the project's
-  commands.
+  commands. That is now rare: inside the sandbox a command does not wait for
+  a permission.
+- **A worker has no web unless you tick it.** Each project in a plan has a
+  web box beside commit and push, off by default. Without it a worker cannot
+  search or read a page; the chair is told so, and asks you to tick the box
+  when a task needs the web rather than planning it as if the worker could.
+  Even with it, a Claude worker's shell downloads nothing, and on macOS it
+  cannot open a port or reach a server on localhost, so a test that starts
+  one fails there.
 - **Your own sessions are never written into.** A second opinion works on a
   copy of a session, never on the session itself.
 
@@ -191,7 +269,7 @@ workers: they run outside the sandbox.
 | `--ceo-max-call` | $2 | Stops a CEO, chair or judge call while it runs, once its estimated cost passes the cap |
 | `--ceo-budget` | $10 per 24 hours | The cap for a tool on an API key, in place of the quota ceiling and the reserve. For a tool on its plan it is ignored once Towerglow has read that plan's usage windows |
 | Parallel workers | 2 (up to 4) | How many planned tasks run at once, on different projects |
-| Time | | A CEO call stops after 3 minutes of silence or 10 minutes in all; a worker after 5 minutes of silence, or 15 to 60 minutes depending on the task's size (20 for proposal workers and second opinions) |
+| Time | | A CEO call stops after 3 minutes of silence or 10 minutes in all; a worker after 5 minutes of silence, or 15 to 60 minutes depending on the task's size (20 for proposal workers and second opinions). The worker of a planned task is told its limit, and to run the part of a long test suite that covers its change when the whole would not fit |
 
 Workers and second opinions have no per-call cost cap: they are full
 sessions, and the reserve is what stops them.
@@ -309,9 +387,12 @@ estimate of what you are billed, not a comparison.
 Under `~/.towerglow/ceo/`, readable only by you:
 
 - `plan.json`: the meeting (your notes and the full text of attachments, the
-  minutes, questions and answers), the plan, its tasks and their git rules;
+  minutes, questions and answers), the plan, each project's boxes (commit,
+  push, web) and commands, and each task with its tool, model and effort;
 - `jobs.json`: the last 50 jobs, with what the worker and the second opinion
-  wrote (up to 20,000 characters each), cost and the documents written;
+  wrote (up to 20,000 characters each), cost and the documents written; the
+  outcome measures are part of each job, and deleting a job or an outcome
+  removes it from this file (the CEOs' one-line notes in `memory.json` stay);
 - `proposals.json`, `memory.json` (up to 24 one-line notes per CEO about past
   work), `spend.json` (the last 24 hours of calls);
 - `archive/` and `plans/`: what "start over" cleared;
@@ -330,9 +411,11 @@ project. `--no-notify` turns it off.
 2. **Start with `--ceo --no-execute`.** You get the analyses, the proposals
    and the planning meeting, and nothing is ever started.
 3. **Untick push** in the planning panel wherever you want to review before
-   anything leaves your machine.
-4. **Read the briefings and the allowed commands** of each project in the
-   planning panel, and the full task on a proposal's card.
+   anything leaves your machine, and tick web only for the projects whose
+   tasks need to look something up.
+4. **Read the briefings** of each project in the planning panel, and the full
+   task on a proposal's card. The commands listed for a project are the
+   checks its worker is told to run, not the only ones it can.
 5. **Keep the reserve** at a level that leaves room for your own work. On an
    API key there is no reserve: set a spending limit on the key instead.
 6. **Hide the projects** you do not want the CEOs to read.
@@ -351,14 +434,39 @@ Said plainly, so that nothing comes as a surprise:
   you want left. A task that restarts after a stop at the reserve can spend
   up to the line once more before it is held.
 - Nothing here keeps your machine awake. If it sleeps, the queue sleeps.
-- With push ticked, `git push` and `git pull` run outside the sandbox, and can
-  reach any host a worker points them at.
+- With push ticked, `git fetch`, `git pull` and `git push` run outside the
+  sandbox, and can reach any host a worker points them at.
+- Inside the project a worker's shell runs any command, so it can delete or
+  overwrite files there, as its edits can. What is not committed is not
+  recoverable.
+- The sandbox stops writes and the network, not reads. A worker's commands
+  can read files outside its project, anywhere your user can, except the
+  folders listed under [The sandbox](#the-sandbox). That list is fixed: a
+  credential kept anywhere else can be read. A worker that was manipulated
+  could copy such a file into the project and, with push ticked, commit and
+  push it; with web ticked it could put it in an address it asks for.
+- With commit unticked, the block on `.git` covers a repository whose `.git`
+  is in the project folder. In a linked worktree the repository is elsewhere,
+  and only the denial of `git add` and `git commit` by name applies.
 - Claude's file tools are outside the OS sandbox: they edit inside the project
-  on their own (`acceptEdits`), and outside it only where Claude Code itself
-  allows, such as its own memory folder for the project.
+  on their own (`acceptEdits`). The memory folder of the project, the one
+  place outside it Claude Code would let them write on their own, is denied
+  for writing.
+- With web ticked a worker reads pages written by anyone, in a session that
+  may commit and push, and every address it asks for is a way out: for a
+  Claude worker through the web tools, for a Codex worker through any
+  command. The prompt tells it that a page is information and never an
+  instruction; nothing enforces that. Tick web for the projects whose tasks
+  need it.
+- The rules that let a worker read its project's notes and nothing else
+  beside them are name patterns, tried on macOS, where names are compared
+  ignoring case. On a system that compares them exactly, a folder whose name
+  differs from `memory`, or from the project's own folder, only in the case
+  of a letter would not be covered; Claude Code creates none.
 - Codex workers have Codex's own sandbox instead (writes in the project,
-  network only when push is ticked), with no per-command list: "no commit"
-  is an instruction in their prompt.
+  network only when push or web is ticked), with no per-command list: "no
+  commit" is an instruction in their prompt, and the notes and the web tools
+  above are Claude Code's.
 - One planning message can cost up to three calls.
 - On an API key the reserve and the quota ceiling do not exist, `--ceo-budget`
   does not stop a worker that is running and does not count Codex work, and

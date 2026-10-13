@@ -246,6 +246,17 @@ test('the chair is asked for each project\'s test commands, and sees the ones al
   assert.ok(!/whether the worker may run/.test(MEETING_ROLE));
   assert.match(MEETING_ROLE, /Workers always run a project's tests/);
   assert.match(MEETING_ROLE, /never a bare interpreter/);
+  // The list is no longer what a worker may run: its sandbox is the gate,
+  // and the chair must know what cannot be done inside it. Two studies of
+  // the plan of 2026-10-13 needed the web, and their workers had none.
+  assert.ok(!/A worker may run only these/.test(MEETING_ROLE));
+  assert.match(MEETING_ROLE, /The worker is told to run these/);
+  assert.match(MEETING_ROLE, /writes only inside its project and has no\nnetwork/);
+  // The web is a box of the user's, off by default: the chair cannot tick it,
+  // so it must ask for it instead of planning as if the worker could read.
+  assert.match(MEETING_ROLE, /unless the user ticks `web` for that project/);
+  assert.match(MEETING_ROLE, /ask the user to tick it: do not plan the task as if the worker could/);
+  assert.match(MEETING_CONTRACT, /for claude leave it null, the user\nsets it/);
   assert.match(MEETING_CONTRACT, /"tests": \["npm test", "node --check \*"\]/);
   assert.ok(!/"git":/.test(MEETING_CONTRACT), 'the git rules are the user\'s checkboxes');
 });

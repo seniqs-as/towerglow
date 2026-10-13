@@ -154,7 +154,7 @@ export class Buildings implements Layer {
       const place = placeSlot(project.slot, pitch);
       // Height and footprint scale with the project's real size: that is
       // what makes a skyline distinguishable instead of a checkerboard.
-      const footprint = buildingFootprint(project.size);
+      const footprint = buildingFootprint();
       const height = buildingHeight(project.size);
       this.#metrics.set(project.id, { height, footprint });
 
@@ -216,7 +216,7 @@ export class Buildings implements Layer {
   }
 
   footprintOf(projectId: string): number {
-    return this.#metrics.get(projectId)?.footprint ?? buildingFootprint(0);
+    return this.#metrics.get(projectId)?.footprint ?? buildingFootprint();
   }
 
   /** The project whose tower the ray hits first, if any. */

@@ -185,15 +185,42 @@ function terminalAppOf(table: Map<number, Proc>, pid: number): string | null {
  * interactive session of whoever was watching, and the click brought HIS
  * window to the front. Not "no terminal" but the wrong terminal, which is
  * worse: it looks like it works.
+ *
+ * A tty is not enough either. The column `ps` prints is the CONTROLLING
+ * terminal, and a child started with three pipes keeps its parent's: with the
+ * server started from a terminal window, every worker showed that window's
+ * tty, and the click on a worker brought the server's own banner forward
+ * instead of opening a view of the work (measured on 2026-10-13: a child with
+ * `stdio: pipe` under a node on ttys003 is listed on ttys003). The test above
+ * had been measured with the server in the background, where neither has one.
+ * So whatever this server started, at any depth, has no window of its own.
+ *
+ * @param self the server's own process: its descendants are headless.
  */
-export function terminalOf(table: Map<number, Proc>, pid: number): { tty: string; app: string } | null {
+export function terminalOf(
+  table: Map<number, Proc>,
+  pid: number,
+  self: number = process.pid,
+): { tty: string; app: string } | null {
   const proc = table.get(pid);
   if (!proc) return null;
   const tty = proc.tty.replace(/^\/dev\//, '');
   // Without a tty there is no window to bring forward, and the parents must
   // not be looked at: they belong to someone else.
   if (!RE_TTY.test(tty)) return null;
+  if (startedBy(table, pid, self)) return null;
   return { tty, app: terminalAppOf(table, pid) ?? 'Terminal' };
+}
+
+/** Whether `pid` is `ancestor` itself or was started by it, at any depth. */
+function startedBy(table: Map<number, Proc>, pid: number, ancestor: number): boolean {
+  let cur = table.get(pid);
+  for (let i = 0; i < 12 && cur; i++) {
+    if (cur.pid === ancestor) return true;
+    if (cur.ppid <= 1) return false;
+    cur = table.get(cur.ppid);
+  }
+  return false;
 }
 
 /**

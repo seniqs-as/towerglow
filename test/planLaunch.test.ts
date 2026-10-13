@@ -122,12 +122,14 @@ test('approving launches the first queued task, with the briefing in the prompt 
   assert.equal(o.model, 'sonnet');
   // The chair proposed no push; "push to main" is ticked by default all the same.
   assert.deepEqual(o.allowed, { commit: true, push: true });
-  assert.deepEqual(o.commands, [], 'no command read or allowed yet: the common runners only');
+  assert.deepEqual(o.commands, [], 'no command read or added yet');
   assert.match(o.task, /Run the project's tests and checks before you finish/);
   assert.match(o.task, /Push to `main` when the tests pass/);
   assert.ok(o.task.includes('CSV, in reports.ts, with a test.'));
   assert.equal(o.resume, null);
   assert.equal(o.ceilingMs, 15 * 60_000, 'small: a quarter of an hour');
+  // The limit it is cut at is the limit it is told: one number, in two places.
+  assert.match(o.task, /This attempt is stopped after 15 minutes/);
   assert.equal(t1.status, 'running');
   assert.equal(t1.attempts, 1);
   assert.equal(t1.jobId, o.id);

@@ -3,7 +3,7 @@ import type {
   TaskStatus,
 } from '../../shared/protocol.ts';
 import {
-  ANSWERS_MINUTE_PREFIX, CLAUDE_MODELS, HUMAN_GRACE_MS, MAX_ANSWER_CHARS, MAX_ATTACHMENT_CHARS, MAX_ATTACHMENTS, MAX_ATTACHMENTS_TOTAL_CHARS,
+  ANSWERS_MINUTE_PREFIX, CLAUDE_MODELS, effortsFor, HUMAN_GRACE_MS, MAX_ANSWER_CHARS, MAX_ATTACHMENT_CHARS, MAX_ATTACHMENTS, MAX_ATTACHMENTS_TOTAL_CHARS,
   MAX_COMMAND_CHARS, MAX_PROJECT_COMMANDS, MAX_SAY_CHARS, MAX_TODO_CHARS,
 } from '../../shared/protocol.ts';
 import { PROVIDER_COLOR } from '../world/palette.ts';
@@ -48,7 +48,9 @@ const DEPTHS: readonly { kind: CeoDepth; label: string; hint: string }[] = [
 ];
 
 const SIZES: readonly PlanTask['size'][] = ['small', 'medium', 'large'];
-const EFFORTS: readonly Effort[] = ['low', 'medium', 'high'];
+/** What the effort select says on hover: what it changes, and what it costs. */
+const EFFORT_HINT = 'How hard the model thinks on this task. Higher levels think longer and use more of your quota; '
+  + 'the default is whatever the tool uses on its own.';
 
 type PlanEvent = Extract<DeltaEvent, { t: 'plan' }>;
 
@@ -138,6 +140,18 @@ export function gitBoxes(branch: string | null): { key: 'commit' | 'push'; label
     { key: 'push', label: `push to ${branch}` },
   ];
 }
+
+/**
+ * The web checkbox of a project: there whether or not the project is under
+ * git, and off until you tick it. What it grants differs by fleet, and the
+ * hint says both, because a project's tasks can be on either.
+ */
+export const WEB_BOX = {
+  label: 'web',
+  hint: 'Lets this project\'s workers look things up on the web. A Claude worker gets the WebSearch and WebFetch '
+    + 'tools, and its shell stays offline; a Codex worker gets the network in its sandbox. A page is text from '
+    + 'outside, read by a session that may commit and push: tick it for the projects that need it.',
+} as const;
 
 /**
  * The HUD's warning for a stalled plan: what it says and how loud it is.
@@ -256,13 +270,34 @@ export function attachmentLine(a: { name: string; chars: number; sent: boolean }
   return `${a.name} · ${a.chars.toLocaleString('en-US')} chars · ${where}`;
 }
 
-/** Fleet, model and size of a task in one breath: "claude · opus · large". */
+/**
+ * Fleet, model and size of a task in one breath: "claude · opus · large".
+ * The effort is there when it says something: always for Codex, whose lever
+ * it is, and for Claude only when you chose one.
+ */
 export function taskLabel(t: Pick<PlanTask, 'provider' | 'model' | 'effort' | 'size'>): string {
-  const bits: string[] = [t.provider];
-  if (t.provider === 'codex') bits.push(t.model ?? 'default model', `${t.effort ?? 'medium'} effort`);
-  else bits.push(t.model ?? 'default model');
+  const bits: string[] = [t.provider, t.model ?? 'default model'];
+  if (t.provider === 'codex') bits.push(`${t.effort ?? 'medium'} effort`);
+  else if (t.effort) bits.push(`${t.effort} effort`);
   bits.push(t.size);
   return bits.join(' · ');
+}
+
+/**
+ * The effort choices for a fleet, as the select shows them.
+ *
+ * Claude has a "default effort" because nothing is passed then, and what
+ * Claude Code does on its own depends on your settings and on the model: the
+ * panel cannot name it. Codex has none: its row has always shown medium.
+ */
+export function effortOptions(provider: ProviderId): { value: Effort | null; label: string }[] {
+  const levels = effortsFor(provider).map((e) => ({ value: e, label: `${e} effort` }));
+  return provider === 'codex' ? levels : [{ value: null, label: 'default effort' }, ...levels];
+}
+
+/** Which of `effortOptions` a task is on. */
+export function effortChoice(t: Pick<PlanTask, 'provider' | 'effort'>): Effort | null {
+  return t.provider === 'codex' ? (t.effort ?? 'medium') : t.effort;
 }
 
 /** The model choices for a fleet, as the select shows them. */
@@ -1128,11 +1163,12 @@ export class Planning {
     git.className = 'planning__git';
     const busy = project.tasks.some((t) => t.status === 'running');
     const branch = doc.branches[project.projectId] ?? null;
-    const box = (key: 'commit' | 'push', label: string): void => {
+    const box = (key: 'commit' | 'push' | 'web', label: string, hint?: string): void => {
       const l = document.createElement('label');
+      if (hint) l.title = hint;
       const c = document.createElement('input');
       c.type = 'checkbox';
-      c.checked = project.git[key];
+      c.checked = project.git[key] === true;
       c.disabled = busy || doc.status === 'done';
       c.addEventListener('change', () => {
         this.#act.onSet({ kind: 'git', projectId: project.projectId, rules: { ...project.git, [key]: c.checked } });
@@ -1151,7 +1187,9 @@ export class Planning {
       none.textContent = 'no git versioning for this project';
       git.appendChild(none);
     }
-    git.title = busy ? 'A task is running: the rules change when it ends.' : 'What a worker may run here.';
+    // The web is not git's: a folder with no repository has the box too.
+    box('web', WEB_BOX.label, busy ? undefined : WEB_BOX.hint);
+    git.title = busy ? 'A task is running: the rules change when it ends.' : 'What a worker may do here: with git, and on the web.';
     const held = doc.active[project.projectId] ?? 0;
     if (held > 0) {
       const badge = document.createElement('span');
@@ -1173,10 +1211,12 @@ export class Planning {
   }
 
   /**
-   * What a worker may run here to test it, besides the common runners: a
-   * chip per command, a cross to take one back, a field to add one before
-   * any worker asks. The server checks each command and says why it refused
-   * one; the list is the project's and stays for the next plans.
+   * The project's own checks: a chip per command, a cross to take one back,
+   * a field to add one. They are what a worker is told to run, no longer
+   * what it may run -- inside its sandbox a command does not ask -- and each
+   * is still an allow rule for the few calls that do. The server checks each
+   * command and says why it refused one; the list is the project's and stays
+   * for the next plans.
    */
   #commandsRow(doc: PlanDoc, project: PlanProject): HTMLElement {
     const row = document.createElement('div');
@@ -1186,8 +1226,9 @@ export class Planning {
     const label = document.createElement('span');
     label.className = 'planning__cmdslabel';
     label.textContent = 'tests run';
-    label.title = 'The tests always run. A worker may use the common runners (npm test, npx, node --test, pytest, '
-      + 'cargo test, go test, php -l, node --check, make test) and the commands listed here, which stay for the next plans.';
+    label.title = 'The tests always run. These are the project\'s own checks, as the worker is told them; they stay for '
+      + 'the next plans. A worker\'s shell runs in a sandbox -- it writes only in the project and has no network -- and '
+      + 'inside it a command does not wait for a permission.';
     row.appendChild(label);
     const locked = doc.status === 'done';
     for (const c of list) {
@@ -1201,7 +1242,7 @@ export class Planning {
         x.type = 'button';
         x.className = 'planning__cmdx';
         x.textContent = '\u00d7';
-        x.setAttribute('aria-label', `stop allowing ${c}`);
+        x.setAttribute('aria-label', `remove ${c}`);
         x.addEventListener('click', () => set(list.filter((y) => y !== c)));
         chip.appendChild(x);
       }
@@ -1210,7 +1251,7 @@ export class Planning {
     if (list.length === 0) {
       const none = document.createElement('span');
       none.className = 'planning__cmdnone';
-      none.textContent = 'the common runners';
+      none.textContent = 'the ones the worker finds';
       row.appendChild(none);
     }
     if (!locked && list.length < MAX_PROJECT_COMMANDS) {
@@ -1281,19 +1322,21 @@ export class Planning {
       }
       model.addEventListener('change', () => this.#act.onSet({ kind: 'task', taskId: t.id, model: model.value || null }));
       picks.appendChild(model);
-      if (t.provider === 'codex') {
-        const eff = document.createElement('select');
-        eff.className = 'planning__select';
-        for (const e of EFFORTS) {
-          const o = document.createElement('option');
-          o.value = e;
-          o.textContent = `${e} effort`;
-          o.selected = e === (t.effort ?? 'medium');
-          eff.appendChild(o);
-        }
-        eff.addEventListener('change', () => this.#act.onSet({ kind: 'task', taskId: t.id, effort: eff.value as Effort }));
-        picks.appendChild(eff);
+      // Every fleet has one: until 2026-10-13 only Codex did, and a Claude
+      // task ran at Claude Code's default with no way to raise it here.
+      const eff = document.createElement('select');
+      eff.className = 'planning__select';
+      eff.title = EFFORT_HINT;
+      const chosen = effortChoice(t);
+      for (const opt of effortOptions(t.provider)) {
+        const o = document.createElement('option');
+        o.value = opt.value ?? '';
+        o.textContent = opt.label;
+        o.selected = opt.value === chosen;
+        eff.appendChild(o);
       }
+      eff.addEventListener('change', () => this.#act.onSet({ kind: 'task', taskId: t.id, effort: (eff.value || null) as Effort | null }));
+      picks.appendChild(eff);
       const size = document.createElement('span');
       size.className = 'planning__size';
       size.textContent = SIZES.includes(t.size) ? t.size : 'medium';

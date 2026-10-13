@@ -44,7 +44,8 @@
     "test": "node --test \"test/**/*.test.ts\"",
     "check:bundle": "node scripts/check-bundle.mjs",
     "check:deps": "node scripts/check-deps.mjs",
-    "check:passive": "node scripts/check-passive.mjs"
+    "check:passive": "node scripts/check-passive.mjs",
+    "probe:worker": "node scripts/probe-worker.ts"
   },
   "author": "Seniqs AS",
   "repository": {

@@ -143,13 +143,15 @@ test('towers never move: position depends ONLY on the slot', () => {
 });
 
 test('the largest footprint never spills out of its lot', () => {
-  const maxFootprint = buildingFootprint(100000);
+  const maxFootprint = buildingFootprint();
   assert.ok(maxFootprint <= LOT_SIZE, `footprint ${maxFootprint} exceeds lot ${LOT_SIZE}`);
   assert.ok(maxFootprint < CELL_PITCH, 'a tower must not touch its neighbour');
 });
 
-test('footprint grows with the number of files', () => {
-  assert.ok(buildingFootprint(100) > buildingFootprint(1));
+test('a new project has the same base as every other tower', () => {
+  // The base used to widen as the project grew; only the height may.
+  assert.equal(buildingFootprint(), LOT_SIZE);
+  assert.ok(floorsForSize(1) < floorsForSize(500), 'height still tracks size');
 });
 
 test('tower height tracks project size, within bounds', () => {

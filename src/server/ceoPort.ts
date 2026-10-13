@@ -301,6 +301,10 @@ export interface CeoDesk {
   resetBoard(): void;
   /** Start Reports over: every job but the running ones goes, archived. */
   resetJobs(): void;
+  /** Erase one job for good. Returns false for a running or unknown job. */
+  deleteJob(id: string): boolean;
+  /** Erase the measure of one job, or of all (`id` null). Returns how many went. */
+  deleteEffects(id: string | null): number;
   /**
    * The planning meeting and its plan, one entry for every frame of it.
    *

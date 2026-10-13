@@ -281,6 +281,22 @@ test('a Claude model off the list becomes null, and so does a Codex model other 
   assert.equal(tasks[2]?.model, 'gpt-5-codex');
 });
 
+test('the web box is yours, off until you tick it, and written only when it is on', () => {
+  assert.deepEqual(normalizeGit({ commit: true, push: false }), { commit: true, push: false }, 'a plan that never ticked it is written as before');
+  assert.deepEqual(normalizeGit({ commit: true, push: false, web: true }), { commit: true, push: false, web: true });
+  assert.deepEqual(normalizeGit({ commit: false, push: false, web: 'yes' as never }), { commit: false, push: false }, 'only a true counts');
+  const s = proposed();
+  const projectId = s.get().projects[0]!.projectId;
+  assert.equal(s.get().projects[0]?.git.web, undefined, 'a project enters the plan with commit and push on, and no web');
+  assert.equal(s.set({ kind: 'git', projectId, rules: { commit: true, push: true, web: true } }, T0).ok, true);
+  assert.equal(s.get().projects[0]?.git.web, true);
+  // The chair's next block does not touch it, in either direction.
+  s.applyOutcome(parsed(), resolve, T0 + 1);
+  assert.equal(s.get().projects[0]?.git.web, true);
+  assert.equal(s.set({ kind: 'git', projectId, rules: { commit: true, push: true, web: false } }, T0 + 2).ok, true);
+  assert.equal(s.get().projects[0]?.git.web, undefined);
+});
+
 test('push without commit does not exist: it is normalised', () => {
   assert.deepEqual(normalizeGit({ commit: false, push: true }), { commit: true, push: true });
   // A plan saved when the tests were a checkbox: the box goes with the load.
@@ -331,6 +347,59 @@ test('a choice made by hand survives the next block', () => {
   assert.equal(t.provider, 'codex');
   assert.equal(t.effort, 'high');
   assert.equal(t.model, null);
+});
+
+/*
+ * The effort of a Claude task (2026-10-13).
+ *
+ * It was Codex's lever only: a Claude task ran at Claude Code's default and
+ * the plan had no way to raise it. Now it is yours to choose on every task,
+ * on that fleet's own scale; the chair still chooses it only for Codex.
+ */
+test('you choose the effort of a Claude task, on Claude\'s scale, and the default is no effort at all', () => {
+  const s = proposed();
+  const id = onlyTask(s);
+  assert.equal(s.get().projects[0]?.tasks[0]?.effort, null, 'untouched, nothing is passed: the tool decides');
+  for (const level of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+    assert.equal(s.set({ kind: 'task', taskId: id, effort: level }, T0).ok, true);
+    assert.equal(s.get().projects[0]?.tasks[0]?.effort, level);
+  }
+  assert.equal(s.get().projects[0]?.tasks[0]?.pinned, true);
+  assert.equal(s.get().projects[0]?.tasks[0]?.model, 'sonnet', 'the effort alone does not move the model');
+  // Back to the default.
+  assert.equal(s.set({ kind: 'task', taskId: id, effort: null }, T0).ok, true);
+  assert.equal(s.get().projects[0]?.tasks[0]?.effort, null);
+  // A word that is no level is the default, never a guess.
+  assert.equal(s.set({ kind: 'task', taskId: id, effort: 'extreme' as never }, T0).ok, true);
+  assert.equal(s.get().projects[0]?.tasks[0]?.effort, null);
+});
+
+test('an effort you chose survives the chair\'s next block, and one the fleet does not have is dropped with the fleet', () => {
+  const s = proposed();
+  const id = onlyTask(s);
+  assert.equal(s.set({ kind: 'task', taskId: id, effort: 'max' }, T0).ok, true);
+  s.applyOutcome(parsed({ projects: [{ ...parsed().projects[0]!, tasks: [task({ id, model: 'haiku', effort: null })] }] }), resolve, T0 + 1);
+  assert.equal(s.get().projects[0]?.tasks[0]?.effort, 'max');
+  // Codex has no `max`: moved there, the task is on Codex's default again.
+  assert.equal(s.set({ kind: 'task', taskId: id, provider: 'codex', model: null }, T0 + 2).ok, true);
+  assert.equal(s.get().projects[0]?.tasks[0]?.effort, null);
+  // A level both have moves with the task.
+  assert.equal(s.set({ kind: 'task', taskId: id, provider: 'claude', effort: 'high' }, T0 + 3).ok, true);
+  assert.equal(s.set({ kind: 'task', taskId: id, provider: 'codex', model: null }, T0 + 4).ok, true);
+  assert.equal(s.get().projects[0]?.tasks[0]?.effort, 'high');
+});
+
+test('the chair sets the effort of a Codex task, never of a Claude one', () => {
+  // A chair free to write the highest level on every Claude task would
+  // spend the window on a plan approved at the price of the default.
+  const s = createPlanStore(tmp(), { providers: ['claude', 'codex'], codexModel: null });
+  s.applyOutcome(parsed({ projects: [{ ...parsed().projects[0]!, tasks: [
+    task({ provider: 'claude', model: 'opus', effort: 'high' }),
+    task({ provider: 'codex', model: null, effort: 'high' }),
+  ] }] }), resolve, T0);
+  const tasks = s.get().projects[0]!.tasks;
+  assert.equal(tasks[0]?.effort, null);
+  assert.equal(tasks[1]?.effort, 'high');
 });
 
 test('an answer survives only with its own question: ids get reused', () => {

@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  attachmentBudget, attachmentLine, countsLine, modelOptions, nextReason, orderAfterMove, readinessOf,
+  attachmentBudget, attachmentLine, countsLine, effortChoice, effortOptions, modelOptions, nextReason, orderAfterMove, readinessOf,
   activeWarning, answerMeter, draftShown, gitBoxes, meetingNext, planTabLabel, sayMeter, seatedChair,
-  sendState, taskLabel, unreadAnswers, workLeft,
+  sendState, taskLabel, unreadAnswers, WEB_BOX, workLeft,
 } from '../src/client/ui/planning.ts';
 import {
-  CLAUDE_MODELS, MAX_ANSWER_CHARS, MAX_ATTACHMENT_CHARS, MAX_ATTACHMENTS, MAX_ATTACHMENTS_TOTAL_CHARS, MAX_SAY_CHARS,
+  CLAUDE_EFFORTS, CLAUDE_MODELS, CODEX_EFFORTS, MAX_ANSWER_CHARS, MAX_ATTACHMENT_CHARS, MAX_ATTACHMENTS, MAX_ATTACHMENTS_TOTAL_CHARS, MAX_SAY_CHARS,
   MAX_TODO_CHARS,
 } from '../src/shared/protocol.ts';
 import type { PlanDoc, PlanTask } from '../src/shared/protocol.ts';
@@ -139,10 +139,36 @@ test('an attachment says whether the chair has it, or whether it goes with the n
   assert.equal(attachmentLine({ name: 'global_todo.txt', chars: 2690, sent: true }), 'global_todo.txt · 2,690 chars · sent to the chair');
 });
 
-test('a task label says fleet, model and size; for Codex the effort too', () => {
+test('a task label says fleet, model and size; the effort for Codex, and for Claude when you chose one', () => {
   assert.equal(taskLabel(task()), 'claude · sonnet · medium');
   assert.equal(taskLabel(task({ model: null })), 'claude · default model · medium');
+  assert.equal(taskLabel(task({ model: 'opus', effort: 'xhigh', size: 'large' })), 'claude · opus · xhigh effort · large');
   assert.equal(taskLabel(task({ provider: 'codex', model: null, effort: 'high', size: 'large' })), 'codex · default model · high effort · large');
+});
+
+test('the web box says what it gives to each fleet, and what a page is', () => {
+  // It stands beside commit and push, and also where there is no git: the
+  // hint is all a user reads before ticking it.
+  assert.equal(WEB_BOX.label, 'web');
+  assert.match(WEB_BOX.hint, /A Claude worker gets the WebSearch and WebFetch tools, and its shell stays offline/);
+  assert.match(WEB_BOX.hint, /a Codex worker gets the network in its sandbox/);
+  assert.match(WEB_BOX.hint, /text from outside, read by a session that may commit and push/);
+  assert.equal(gitBoxes(null), null, 'no git: no commit and no push, and the web box is drawn apart from them');
+});
+
+test('every fleet has an effort to choose: Claude its five levels and a default, Codex its three', () => {
+  // Only a Codex task had the select: a Claude task ran at Claude Code's
+  // default and the plan could not say "think harder on this one".
+  assert.deepEqual(effortOptions('claude').map((o) => o.value), [null, 'low', 'medium', 'high', 'xhigh', 'max']);
+  assert.equal(effortOptions('claude')[0]?.label, 'default effort');
+  assert.deepEqual(effortOptions('claude').slice(1).map((o) => o.label), CLAUDE_EFFORTS.map((e) => `${e} effort`));
+  assert.deepEqual(effortOptions('codex').map((o) => o.value), [...CODEX_EFFORTS]);
+  // What the select shows as chosen: nothing passed is "default" for Claude,
+  // and medium for Codex, whose row has always said so.
+  assert.equal(effortChoice(task()), null);
+  assert.equal(effortChoice(task({ effort: 'max' })), 'max');
+  assert.equal(effortChoice(task({ provider: 'codex', effort: null })), 'medium');
+  assert.equal(effortChoice(task({ provider: 'codex', effort: 'low' })), 'low');
 });
 
 test('the model options are the shared list for Claude, and only the default for Codex', () => {

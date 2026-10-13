@@ -530,9 +530,12 @@ export function createPlanDesk(opts: PlanDeskOptions): PlanDesk {
     // and the retry after that starts fresh with the whole briefing.
     const resume = task.attempts > 0 ? task.sessionId : null;
     const branch = branchOf(project.projectId);
+    const ceilingMs = SIZE_CEILING_MS[task.size] ?? SIZE_CEILING_MS.medium;
+    // The worker is told the limit it is cut at: the same number, in minutes.
+    const limitMinutes = Math.round(ceilingMs / 60_000);
     const prompt = resume
-      ? (task.answer !== null && task.question !== null ? planAnswer(task) : planRetry(task))
-      : planTask({ task, project, minutes: plan.minutes, branch, commands: plan.commands[project.projectId] ?? [] });
+      ? (task.answer !== null && task.question !== null ? planAnswer(task, limitMinutes) : planRetry(task, limitMinutes))
+      : planTask({ task, project, minutes: plan.minutes, branch, commands: plan.commands[project.projectId] ?? [], limitMinutes });
     return {
       id: `${task.id}:${attempt}`,
       provider: task.provider,
@@ -546,7 +549,7 @@ export function createPlanDesk(opts: PlanDeskOptions): PlanDesk {
       allowed: effectiveGit(project.git, branch),
       commands: plan.commands[project.projectId] ?? [],
       resume,
-      ceilingMs: SIZE_CEILING_MS[task.size] ?? SIZE_CEILING_MS.medium,
+      ceilingMs,
       origin: { planId: plan.id, taskId: task.id, attempt },
     };
   };

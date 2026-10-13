@@ -680,12 +680,28 @@ export type PlanStatus = 'drafting' | 'proposed' | 'approved' | 'paused' | 'done
  */
 export type TaskStatus = 'queued' | 'running' | 'question' | 'done' | 'failed' | 'skipped';
 export type TaskSize = 'small' | 'medium' | 'large';
-/** Codex reasoning effort. `null` for Claude, whose lever is the model. */
-export type Effort = 'low' | 'medium' | 'high';
+/**
+ * How hard a task's model thinks, on its own tool's scale. `null` is the
+ * tool's default: nothing is passed, and the tool decides.
+ *
+ * It was Codex's lever only until 2026-10-13, when the user asked to choose
+ * it for Claude too: a Claude task ran at whatever Claude Code defaults to,
+ * and the plan had no way to say "think harder on this one".
+ */
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+/** Claude Code's `--effort` levels, lightest first, as the CLI names them. */
+export const CLAUDE_EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+/** The levels of Codex's `model_reasoning_effort` that are passed: its stable scale. */
+export const CODEX_EFFORTS: readonly Effort[] = ['low', 'medium', 'high'];
+
+/** A fleet's scale. Shared because the panel's select and the server's validation must agree. */
+export function effortsFor(provider: ProviderId): readonly Effort[] {
+  return provider === 'codex' ? CODEX_EFFORTS : CLAUDE_EFFORTS;
+}
 
 /**
- * What a worker may do with git in a project. `push` implies `commit`:
- * normalised on write.
+ * What a worker may do in a project: with git, and on the web. `push`
+ * implies `commit`: normalised on write.
  *
  * There is no `tests`: a worker always runs the tests (decision of the user,
  * 2026-09-19: "the tests must always run, the checkbox is not even needed").
@@ -694,6 +710,16 @@ export type Effort = 'low' | 'medium' | 'high';
 export interface GitRules {
   commit: boolean;
   push: boolean;
+  /**
+   * The worker may search and read the web. Off unless you tick it, and
+   * absent when off: a plan saved before the box existed means no.
+   *
+   * Asked by the user on 2026-10-13, after two studies of one plan could not
+   * look anything up. It is a rule of yours like the two above, never the
+   * chair's: a page a worker reads is text from outside, in a session that
+   * may commit and push.
+   */
+  web?: boolean;
 }
 
 /**
@@ -778,7 +804,7 @@ export interface PlanTask {
   model: string | null;
   effort: Effort | null;
   size: TaskSize;
-  /** You changed provider or model by hand: a later CEO turn keeps them. */
+  /** You changed provider, model or effort by hand: a later CEO turn keeps them. */
   pinned: boolean;
   status: TaskStatus;
   question: string | null;
@@ -840,11 +866,13 @@ export interface PlanDoc {
   review: boolean;
   projects: PlanProject[];
   /**
-   * What a worker may run in each project to test it, by project id, as
-   * permission patterns (`npm test`, `php tests/*`): what the chair read in
-   * the repository, what you added, what you allowed when a worker asked.
-   * Kept by project and not inside a plan project, so a new plan starts
-   * with them: a permission given once is not asked for again.
+   * Each project's own tests and checks, by project id, as permission
+   * patterns (`npm test`, `php tests/*`): what the chair read in the
+   * repository, what you added, what you allowed when a worker asked. A
+   * worker is told to run them, and they are allow rules for the few calls
+   * its sandbox does not approve by itself. Kept by project and not inside
+   * a plan project, so a new plan starts with them: a permission given once
+   * is not asked for again.
    */
   commands: Record<string, string[]>;
   /**
@@ -1265,6 +1293,18 @@ export type ClientFrame =
    */
   | { t: 'board.reset' }
   | { t: 'jobs.reset' }
+  /**
+   * Erase ONE job from Reports, for good (no archive copy: the single
+   * erasure is the point). A running job is refused. Everyone is told with a
+   * `ceo.cleared` whose `keep` is every job that remains.
+   */
+  | { t: 'job.delete'; id: string }
+  /**
+   * Erase the outcome (the measure) of one job, or of every job. The jobs
+   * stay in Reports; the Outcomes panel gets the board again.
+   */
+  | { t: 'effect.delete'; id: string }
+  | { t: 'effects.reset' }
   /**
    * Open a window with everything the job's session did, read-only.
    *

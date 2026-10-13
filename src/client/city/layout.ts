@@ -195,11 +195,13 @@ export function buildingHeight(fileCount: number): number {
   return floorsForSize(fileCount) * FLOOR_HEIGHT;
 }
 
-/** Footprint on the ground: it grows with the project, never past the lot. */
-export function buildingFootprint(fileCount: number): number {
-  if (!Number.isFinite(fileCount) || fileCount <= 0) return 9;
-  const grow = 9 + 3.2 * Math.log2(1 + Math.max(0, fileCount)) / 2.2;
-  return Math.min(LOT_SIZE, grow);
+/**
+ * Footprint on the ground: one size for every tower, the widest the lot
+ * allows. It used to grow with the file count, so a new project stood on a
+ * narrow base and widened as it grew; only the height tracks size now.
+ */
+export function buildingFootprint(): number {
+  return LOT_SIZE;
 }
 
 /* ───────────────────────── windows ───────────────────────── */

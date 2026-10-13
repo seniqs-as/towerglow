@@ -865,6 +865,23 @@ export function createCeoDesk(opts: CeoDeskOptions): CeoDesk {
       opts.broadcast([{ t: 'ceo.cleared', at: now, what: 'jobs', keep }]);
     },
 
+    deleteJob(id) {
+      if (!jobs.remove(id)) return false;
+      jobs.save();
+      opts.broadcast([{
+        t: 'ceo.cleared', at: Date.now(), what: 'jobs', keep: jobs.list().map((j) => j.id),
+      }]);
+      return true;
+    },
+
+    deleteEffects(id) {
+      let n: number;
+      if (id === null) n = jobs.clearEffects().length;
+      else n = jobs.clearEffect(id) ? 1 : 0;
+      if (n > 0) jobs.save();
+      return n;
+    },
+
     plan: (frame, reply) => planDesk.handle(frame, reply),
 
     states() {

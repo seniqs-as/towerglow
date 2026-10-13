@@ -80,9 +80,16 @@ change your repositories and can push. The guards are real:
 - you see a proposal's full task, and every briefing of a plan, before you
   approve anything;
 - every Claude worker runs in the OS sandbox: its shell writes only in the
-  project, reaches no network unless push is ticked, and cannot read your
-  credentials; on top of that an allow-list decides which commands may start,
-  and no worker starts where you are working;
+  project, reaches no network unless push is ticked, and cannot read a fixed
+  list of credential folders. Inside that boundary its commands run without
+  asking; the git boxes you leave unticked are denied by name, and with
+  commit unticked the shell cannot write in the project's `.git`. No worker
+  starts where you are working;
+- a worker reads the web only in the projects where you ticked web, through
+  Claude Code's two web tools, and its shell stays offline;
+- of your Claude Code data a worker reads one folder, the notes kept for its
+  own project, and writes none: your other sessions' transcripts and the
+  other projects' notes are denied;
 - a second opinion cannot change anything;
 - Reports opens only documents inside the project (`.md`, `.markdown` or
   `.txt`, checked on the file itself after following links), and showing a
@@ -95,8 +102,22 @@ So are the limits. Read [docs/ceo-mode.md](docs/ceo-mode.md) before using it.
 - `--redact-paths` replaces names with short unsalted hashes: someone who can
   guess your folder names can confirm them. It hides, it does not encrypt.
 - Project ids are unsalted hashes of their paths, for the same reason.
-- With the CEOs and push ticked, a worker's `git push` and `git pull` run
-  outside its sandbox and can reach any host.
+- With the CEOs and push ticked, a worker's `git fetch`, `git pull` and
+  `git push` run outside its sandbox and can reach any host.
+- A worker's shell runs any command inside its project, so it can delete or
+  overwrite files there. The sandbox bounds what a command reaches, not which
+  commands run.
+- The sandbox stops writes and the network, not reads. A worker's commands
+  can read files outside its project, anywhere your user can, except the
+  folders listed in [docs/ceo-mode.md](docs/ceo-mode.md#the-sandbox). That
+  list is fixed: a credential kept anywhere else, such as a token in
+  `~/.npmrc` or a `.env` file of another project, can be read. A worker that
+  was manipulated could copy such a file into the project and, with push
+  ticked, commit and push it, or with web ticked put it in an address it
+  asks for.
+- With web ticked, a worker reads pages written by anyone while it may commit
+  and push, and every address it asks for is a way out. It is told that a
+  page is information and not an instruction; nothing enforces that.
 - The token is never rotated on its own. To get a new one, stop Towerglow,
   delete `~/.towerglow/token` and start again.
 - Windows is not supported: session discovery does not work there.

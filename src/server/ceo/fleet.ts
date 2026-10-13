@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import type { Effort, GitRules, ProviderId, RateWindow, Snapshot } from '../../shared/protocol.ts';
-import { allowedToolsFor, codexResumeSandboxFor, codexSandboxFor, disallowedToolsFor, OUTSIDE_SANDBOX_DENIED, sandboxFor } from './allow.ts';
+import { allowedToolsFor, codexResumeSandboxFor, codexSandboxFor, disallowedToolsFor, gitDirOf, outsideSandboxDenied, projectMemoryOf, sandboxFor } from './allow.ts';
+import type { ProjectMemory } from './allow.ts';
 import { humanSessions } from './scheduler.ts';
 import type { JobEnd } from './jobs.ts';
 import type { PlanRef } from './jobs.ts';
@@ -73,7 +74,7 @@ export interface WorkOrder {
   model: string | null;
   effort: Effort | null;
   allowed: GitRules;
-  /** The project's test commands, as permission patterns: allowed besides the common runners. */
+  /** The project's test commands, as permission patterns: allow rules for the calls the sandbox does not approve by itself. */
   commands: readonly string[];
   /** A session of a previous attempt to resume, or null for a fresh one. */
   resume: string | null;
@@ -139,6 +140,12 @@ export interface FleetOptions {
   spawn?: typeof spawn;
   /** The silence clock, injected so a test does not wait five minutes. */
   silenceMs?: number;
+  /**
+   * A project's memory folder and its neighbours, for the rules of a Claude
+   * worker. Injected so a test does not read the folders of whoever runs it;
+   * `projectMemoryOf` when left out.
+   */
+  memoryOf?: (cwd: string) => ProjectMemory | null;
 }
 
 export interface Launch {
@@ -396,8 +403,10 @@ export function createFleet(opts: FleetOptions): Fleet {
         ],
       };
     }
+    // The project's own notes, read now: the rules name every other project's folder.
+    const memory = hand.allowed ? (opts.memoryOf ?? projectMemoryOf)(cwd) : null;
     const allowed = hand.allowed ? allowedToolsFor(hand.allowed, hand.commands) : [];
-    const denied = hand.allowed ? [...disallowedToolsFor(hand.allowed), ...OUTSIDE_SANDBOX_DENIED] : [];
+    const denied = hand.allowed ? [...disallowedToolsFor(hand.allowed), ...outsideSandboxDenied(hand.allowed, memory)] : [];
     return {
       bin: 'claude',
       args: [
@@ -405,6 +414,9 @@ export function createFleet(opts: FleetOptions): Fleet {
         '--output-format', 'stream-json',
         '--verbose',
         '--model', hand.model ?? opts.model,
+        // Only an effort chosen in the plan is passed: with none, Claude Code
+        // keeps its own default, as it did when the plan could not choose.
+        ...(hand.effort ? ['--effort', hand.effort] : []),
         /*
          * It works as you would, and it pays to know how free its hand is.
          *
@@ -438,8 +450,8 @@ export function createFleet(opts: FleetOptions): Fleet {
           // and the worker says so, instead of sitting on a question for the
           // twenty minutes of the hard kill.
           '--permission-prompts', 'none',
-          // The boundary the allow-list could not be: see `sandboxFor`.
-          '--settings', JSON.stringify(sandboxFor(hand.allowed)),
+          // The boundary, inside which the shell runs without asking: see `sandboxFor`.
+          '--settings', JSON.stringify(sandboxFor(hand.allowed, gitDirOf(cwd), memory?.dir ?? null)),
           // No MCP server of yours: it runs outside the sandbox.
           '--strict-mcp-config',
           ...(hand.resume ? ['--resume', hand.resume] : []),

@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import { createFleet } from '../src/server/ceo/fleet.ts';
@@ -72,6 +75,8 @@ function harness(t: TestContext, over: Partial<FleetOptions> = {}): Harness {
     execute: true,
     snapshot,
     cwdOf: (id) => (id === 'p-alpha' ? '/tmp/alpha' : id === 'p-beta' ? '/tmp/beta' : undefined),
+    // No notes unless a test gives some: the real reader lists the folders of whoever runs the tests.
+    memoryOf: () => null,
     authorized: () => null,
     onStart: () => {},
     onProgress: () => {},
@@ -113,28 +118,55 @@ test('an order carries its own model, the git rules as allow and deny, and no pe
   assert.ok(!args.includes('--resume'));
 });
 
-test('a Claude worker runs in the OS sandbox: no way out, no auto-approval, no network unless it pushes', (t) => {
+const settingsOf = (h: Harness, n: number): { sandbox: Record<string, unknown> } => {
+  const args = h.spawned[n]!.args;
+  return JSON.parse(args[args.indexOf('--settings') + 1]!) as { sandbox: Record<string, unknown> };
+};
+
+test('a Claude worker runs in the OS sandbox: no way out, no network unless it pushes, and inside it nothing asks', (t) => {
   // The allow-list alone was a fence: npm run, npx and the test runners run
   // whatever an injected worker writes into package.json or a Makefile, so
-  // it could push with push unticked. The sandbox is the boundary.
+  // it could push with push unticked. The sandbox is the boundary -- and
+  // since 2026-10-13 the only gate: with a list in front of it, seven workers
+  // of one plan were refused 52 commands nobody was there to allow.
   const h = harness(t);
   assert.equal(h.fleet.launch(order()).ok, true);
   assert.equal(h.fleet.launch(order({ id: 't2:1', projectId: 'p-beta', projectName: 'beta', allowed: { tests: true, commit: true, push: true } } as never)).ok, true);
-  const settingsOf = (n: number): { sandbox: Record<string, unknown> } => {
-    const args = h.spawned[n]!.args;
-    return JSON.parse(args[args.indexOf('--settings') + 1]!) as { sandbox: Record<string, unknown> };
-  };
-  const off = settingsOf(0).sandbox;
+  const off = settingsOf(h, 0).sandbox;
   assert.equal(off['enabled'], true);
   assert.equal(off['failIfUnavailable'], true, 'no sandbox must mean no worker, not an unsandboxed one');
   assert.equal(off['allowUnsandboxedCommands'], false);
-  assert.equal(off['autoAllowBashIfSandboxed'], false, 'the allow-list stays the gate');
+  assert.equal(off['autoAllowBashIfSandboxed'], true, 'what runs inside the boundary does not wait for a yes');
   assert.equal(off['excludedCommands'], undefined, 'push off: nothing runs outside');
   assert.deepEqual(off['network'], { strictAllowlist: true });
   assert.ok((off['filesystem'] as { denyRead: string[] }).denyRead.includes('~/.ssh'));
-  const on = settingsOf(1).sandbox;
-  assert.deepEqual(on['excludedCommands'], ['git push', 'git push *', 'git pull', 'git pull *']);
+  const on = settingsOf(h, 1).sandbox;
+  assert.deepEqual(on['excludedCommands'], ['git fetch', 'git fetch *', 'git pull', 'git pull *', 'git push', 'git push *']);
   for (const n of [0, 1]) assert.ok(h.spawned[n]!.args.includes('--strict-mcp-config'));
+});
+
+test('with commit unticked the shell cannot write in the repository\'s .git, and only where there is one', (t) => {
+  // Once any command runs inside the sandbox, the deny on `git commit` typed
+  // as such is no longer what keeps the history still: a `git stash`, a
+  // `git update-ref` or a script that commits would go through it.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-fleet-repo-'));
+  fs.mkdirSync(path.join(repo, '.git'));
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-fleet-bare-'));
+  const h = harness(t, { cwdOf: (id) => (id === 'p-alpha' ? repo : id === 'p-beta' ? bare : undefined) });
+  const quiet = { tests: true, commit: false, push: false };
+  assert.equal(h.fleet.launch(order({ allowed: quiet } as never)).ok, true);
+  assert.equal(h.fleet.launch(order({ id: 't2:1', projectId: 'p-beta', projectName: 'beta', allowed: quiet } as never)).ok, true);
+  const fsOf = (n: number): { denyWrite?: string[] } => settingsOf(h, n).sandbox['filesystem'] as { denyWrite?: string[] };
+  assert.deepEqual(fsOf(0).denyWrite, [path.join(repo, '.git')]);
+  // A missing path is never denied: on Linux the sandbox would hold it with
+  // a placeholder file named `.git` in a folder that is not a repository.
+  assert.equal(fsOf(1).denyWrite, undefined);
+  const denied = h.spawned[1]!.args.slice(h.spawned[1]!.args.indexOf('--disallowedTools') + 1);
+  assert.ok(denied.includes('Bash(git init:*)'), 'and no repository is made where you chose to have none');
+
+  const h2 = harness(t, { cwdOf: () => repo });
+  assert.equal(h2.fleet.launch(order()).ok, true);
+  assert.equal((settingsOf(h2, 0).sandbox['filesystem'] as { denyWrite?: string[] }).denyWrite, undefined, 'a worker that may commit writes there');
 });
 
 test('with no model in the order the fleet model applies; with a session to resume there is --resume', (t) => {
@@ -143,6 +175,67 @@ test('with no model in the order the fleet model applies; with a session to resu
   const { args } = h.spawned[0]!;
   assert.equal(args[args.indexOf('--model') + 1], 'sonnet');
   assert.equal(args[args.indexOf('--resume') + 1], 'sess-9');
+});
+
+test('a worker of a project with notes may read them, by tool and by shell, and nothing beside them', (t) => {
+  // The decsim2 worker asked three times for two notes of its own project:
+  // the whole of ~/.claude/projects was one deny rule.
+  const dir = '/Users/me/.claude/projects/-tmp-alpha/memory';
+  const h = harness(t, { memoryOf: (cwd) => (cwd === '/tmp/alpha' ? { dir, slug: '-tmp-alpha' } : null) });
+  assert.equal(h.fleet.launch(order()).ok, true);
+  assert.equal(h.fleet.launch(order({ id: 't2:1', projectId: 'p-beta', projectName: 'beta' })).ok, true);
+  const deniedOf = (n: number): string[] => h.spawned[n]!.args.slice(h.spawned[n]!.args.indexOf('--disallowedTools') + 1);
+  const withNotes = deniedOf(0);
+  assert.deepEqual((settingsOf(h, 0).sandbox['filesystem'] as { allowRead?: string[] }).allowRead, [dir]);
+  assert.ok(!withNotes.includes('Read(~/.claude/projects/**)'));
+  // The other projects, whole, without one of them being named on the command line.
+  assert.ok(withNotes.includes('Read(~/.claude/projects/-tmp-alpha[0-9A-Za-z_.-]*/**)'), 'a longer name than its own');
+  assert.ok(withNotes.includes('Read(~/.claude/projects/-tmp-[0-9B-Zb-z_.-]*/**)'), 'a name that parts from its own');
+  assert.ok(!h.spawned[0]!.args.some((a) => a.includes('beta')));
+  assert.ok(withNotes.includes('Read(~/.claude/projects/**/*.jsonl)'), 'every transcript');
+  assert.ok(withNotes.includes('Edit(~/.claude/projects/**)'), 'and no note can be written');
+  // A project with no notes: the whole folder, as before.
+  assert.equal((settingsOf(h, 1).sandbox['filesystem'] as { allowRead?: string[] }).allowRead, undefined);
+  assert.ok(deniedOf(1).includes('Read(~/.claude/projects/**)'));
+});
+
+test('with web ticked a Claude worker gets the two web tools, and its shell no network', (t) => {
+  const h = harness(t);
+  h.fleet.launch(order({ allowed: { commit: true, push: false, web: true } }));
+  h.fleet.launch(order({ id: 't2:1', projectId: 'p-beta', projectName: 'beta' }));
+  const part = (n: number): { allowed: string[]; denied: string[] } => {
+    const a = h.spawned[n]!.args;
+    return { allowed: a.slice(a.indexOf('--allowedTools') + 1, a.indexOf('--disallowedTools')), denied: a.slice(a.indexOf('--disallowedTools') + 1) };
+  };
+  for (const tool of ['WebFetch', 'WebSearch']) {
+    assert.ok(part(0).allowed.includes(tool), `${tool} allowed with the box ticked`);
+    assert.ok(!part(0).denied.includes(tool));
+    assert.ok(part(1).denied.includes(tool), `${tool} denied without it`);
+    assert.ok(!part(1).allowed.includes(tool));
+  }
+  assert.deepEqual(settingsOf(h, 0).sandbox['network'], { strictAllowlist: true }, 'the shell reaches no host either way');
+  assert.equal(settingsOf(h, 0).sandbox['excludedCommands'], undefined);
+});
+
+test('a Claude order carries the effort you chose, and none when you chose none', (t) => {
+  // A Claude task ran at Claude Code's default, whatever the plan said: the
+  // effort was Codex's lever only and never reached this command line.
+  const h = harness(t);
+  h.fleet.launch(order({ effort: 'xhigh' }));
+  const chosen = h.spawned[0]!.args;
+  assert.equal(chosen[chosen.indexOf('--effort') + 1], 'xhigh');
+  assert.ok(!chosen.some((a) => a.includes('model_reasoning_effort')), 'that is Codex\'s flag');
+  h.fleet.launch(order({ id: 't2:1', projectId: 'p-beta', projectName: 'beta', effort: null }));
+  assert.ok(!h.spawned[1]!.args.includes('--effort'), 'the default is Claude Code\'s own: nothing is passed');
+  // A resumed session keeps what the task says now.
+  h.fakes[0]!.child.kill();
+  return new Promise<void>((done) => setImmediate(() => {
+    h.fleet.launch(order({ id: 't1:2', effort: 'max', resume: 'sess-9', origin: { planId: 'plan-1', taskId: 't1', attempt: 2 } }));
+    const resumed = h.spawned[2]!.args;
+    assert.equal(resumed[resumed.indexOf('--effort') + 1], 'max');
+    assert.equal(resumed[resumed.indexOf('--resume') + 1], 'sess-9');
+    done();
+  }));
 });
 
 test('a Codex order: no Claude aliases, sandbox with network only for the push, resume without -s', (t) => {

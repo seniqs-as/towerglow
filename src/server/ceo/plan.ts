@@ -5,7 +5,7 @@ import type {
   PlanProject, PlanStatus, PlanTask, ProviderId, Reserve, TaskSize, TaskStatus,
 } from '../../shared/protocol.ts';
 import {
-  ANSWERS_MINUTE_PREFIX, CLAUDE_MODELS, MAX_ANSWER_CHARS, MAX_ATTACHMENT_CHARS, MAX_ATTACHMENT_NAME_CHARS,
+  ANSWERS_MINUTE_PREFIX, CLAUDE_MODELS, effortsFor, MAX_ANSWER_CHARS, MAX_ATTACHMENT_CHARS, MAX_ATTACHMENT_NAME_CHARS,
   MAX_ATTACHMENTS, MAX_ATTACHMENTS_TOTAL_CHARS, MAX_BRIEFING_CHARS, MAX_FIELD_CHARS,
   MAX_MINUTE_CHARS, MAX_PLAN_TASKS, MAX_PROJECT_COMMANDS, MAX_QUESTION_CHARS, MAX_SAY_CHARS,
   MAX_SUMMARY_CHARS, MAX_TODO_CHARS,
@@ -260,7 +260,6 @@ export const DEPTH_NAMES: readonly CeoDepth[] = ['fast', 'standard', 'deep'];
 const STATUSES = new Set<PlanStatus>(['drafting', 'proposed', 'approved', 'paused', 'done']);
 const TASK_STATUSES = new Set<TaskStatus>(['queued', 'running', 'question', 'done', 'failed', 'skipped']);
 const SIZES = new Set<TaskSize>(['small', 'medium', 'large']);
-const EFFORTS = new Set<Effort>(['low', 'medium', 'high']);
 
 export function emptyPlan(now: number, chair: ProviderId): Plan {
   return {
@@ -297,10 +296,14 @@ export function defaultGit(): GitRules {
   return { commit: true, push: true };
 }
 
-/** `push` without `commit` is not a thing: a push ships commits. Anything else in the object goes. */
+/**
+ * `push` without `commit` is not a thing: a push ships commits. `web` is kept
+ * only when it is on, so a plan that never ticked it is written as before.
+ * Anything else in the object goes.
+ */
 export function normalizeGit(rules: Partial<GitRules> | null | undefined): GitRules {
   const push = rules?.push === true;
-  return { commit: push || rules?.commit === true, push };
+  return { commit: push || rules?.commit === true, push, ...(rules?.web === true ? { web: true } : {}) };
 }
 
 /** The commands by project, from a file or a patch: valid ones only, and no empty list. */
@@ -388,10 +391,26 @@ function cut(text: string, cap: number): string {
   return text.length > cap ? `${text.slice(0, cap - 1)}…` : text;
 }
 
-/** Effort is Codex's lever only; for Claude the lever is the model. */
+/**
+ * A task's effort on its own fleet's scale. A level the fleet does not have
+ * -- `max` on a task moved to Codex -- is the default again, never a guess at
+ * the nearest one.
+ */
 function effortOf(provider: ProviderId, effort: Effort | null | undefined): Effort | null {
-  if (provider !== 'codex' || !effort) return null;
-  return EFFORTS.has(effort) ? effort : null;
+  if (!effort) return null;
+  return effortsFor(provider).includes(effort) ? effort : null;
+}
+
+/**
+ * The chair's word on effort, which counts for Codex only.
+ *
+ * For Claude the chair's lever stays the model: an effort on a Claude task
+ * is yours to raise, from the panel. A chair free to write `max` on every
+ * task would spend the window on a plan you approved at the price of the
+ * default.
+ */
+function chairEffort(provider: ProviderId, effort: Effort | null | undefined): Effort | null {
+  return provider === 'codex' ? effortOf(provider, effort) : null;
 }
 
 /** A file name as a label: one line, no control characters, never empty. */
@@ -726,7 +745,7 @@ export function createPlanStore(stateDir: string, opts: PlanStoreOptions): PlanS
           const found = findTask(plan, patch.taskId);
           if (!found) return no('no such task');
           if (found.task.status !== 'queued') {
-            return no(`${found.task.title}: only a queued task can change fleet or model`);
+            return no(`${found.task.title}: only a queued task can change fleet, model or effort`);
           }
           const provider = patch.provider ?? found.task.provider;
           if (!providers.includes(provider)) return no(`there is no ${provider} CEO here`);
@@ -825,12 +844,12 @@ export function createPlanStore(stateDir: string, opts: PlanStoreOptions): PlanS
                 ...existing, title, briefing, size,
                 provider: existing.pinned ? existing.provider : provider,
                 model: existing.pinned ? existing.model : validModel(provider, pt.model),
-                effort: existing.pinned ? existing.effort : effortOf(provider, pt.effort),
+                effort: existing.pinned ? existing.effort : chairEffort(provider, pt.effort),
               }
             : {
                 id: newId('t', now), title, briefing, provider, size,
                 model: validModel(provider, pt.model),
-                effort: effortOf(provider, pt.effort),
+                effort: chairEffort(provider, pt.effort),
                 pinned: false, status: 'queued', question: null, answer: null, needs: [], attempts: 0,
                 jobId: null, sessionId: null, did: null, learned: null, reason: null,
               };

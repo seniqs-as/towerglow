@@ -29,6 +29,8 @@ export interface ReportsActions {
   onOpen: (jobId: string, index: number) => void;
   /** Start Reports over. The server clears it and tells everyone: see `clear`. */
   onReset: () => void;
+  /** Erase one job for good. The server tells everyone with the same `clear`. */
+  onDelete: (jobId: string) => void;
 }
 
 export type JobEvent = Extract<DeltaEvent, { t: 'job' }>;
@@ -95,6 +97,8 @@ interface Row {
    * and a button per document is cheaper to remake than to reconcile.
    */
   acts: HTMLElement;
+  /** Erase this job: two clicks, and not offered while it runs. */
+  del: HTMLElement;
   /** What came out of it. */
   body: HTMLElement;
   /**
@@ -415,6 +419,9 @@ export class Reports {
         ));
       });
       row.acts.hidden = row.acts.childElementCount === 0;
+      // A running job has a process working for it: the server refuses, and
+      // the button is not offered.
+      row.del.hidden = job.state === 'running';
 
       // The order changes when a new one arrives, and the DOM must follow it.
       this.#list.appendChild(row.root);
@@ -489,16 +496,23 @@ export class Reports {
     acts.className = 'reports__acts';
     acts.hidden = true;
 
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'reports__del';
+    del.title = 'Erase this job and its outcome for good. The CEOs keep their notes about it.';
+    twoClicks(del, 'delete', 'erase it? click again', () => this.#act.onDelete(id));
+    del.addEventListener('click', (e) => e.stopPropagation());
+
     const verdict = document.createElement('div');
     verdict.className = 'reports__body reports__verdict';
     verdict.hidden = true;
 
     head.addEventListener('click', () => this.#toggleRow(id));
-    root.append(head, tabs, acts, body, verdict);
+    root.append(head, tabs, acts, del, body, verdict);
     this.#list.appendChild(root);
 
     const row: Row = {
-      root, head, title, did, meta, tabs, outcomeTab, acts,
+      root, head, title, did, meta, tabs, outcomeTab, acts, del,
       body, verdictTab, verdict, open: false, verdictOpen: false,
     };
     this.#rows.set(id, row);

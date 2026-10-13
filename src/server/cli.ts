@@ -461,6 +461,22 @@ async function start(cfg: Config): Promise<number> {
         else ceoDesk.resetJobs();
         return;
       }
+      if (frame.t === 'job.delete' || frame.t === 'effect.delete' || frame.t === 'effects.reset') {
+        if (!ceoDesk) {
+          reply({ t: 'error', code: 'internal', detail: 'the CEOs are not running' });
+          return;
+        }
+        // The id is a key into the server's own ledger, never a path: an
+        // unknown one deletes nothing.
+        if (frame.t === 'job.delete') {
+          ceoDesk.deleteJob(frame.id);
+          return;
+        }
+        ceoDesk.deleteEffects(frame.t === 'effect.delete' ? frame.id : null);
+        // The panel that asked gets the board again, the same road as a read.
+        ceoDesk.effects(reply);
+        return;
+      }
       if (frame.t === 'job.watch' || frame.t === 'job.open') {
         /*
          * The log of a job, or a document it wrote, opened from Reports.

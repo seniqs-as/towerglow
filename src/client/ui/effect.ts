@@ -4,6 +4,7 @@ import {
 import type { EffectItem, EffectMetricId, EffectPair, ProviderId } from '../../shared/protocol.ts';
 import { PROVIDER_COLOR } from '../world/palette.ts';
 import { renderMarkdown } from './markdown.ts';
+import { twoClicks } from './twoClicks.ts';
 
 /**
  * How it went AFTERWARDS.
@@ -28,6 +29,10 @@ export interface EffectActions {
   onRead: () => void;
   /** Ask the CEO to try to prove itself wrong. It costs a preamble, and says so. */
   onJudge: (id: string) => void;
+  /** Erase the outcome of one job. The server answers with the board again. */
+  onDelete: (id: string) => void;
+  /** Erase every outcome. The server answers with the board again. */
+  onReset: () => void;
 }
 
 /* ─────────────────── the decisions, pure and testable ─────────────────── */
@@ -328,6 +333,16 @@ export class Effect {
     }
 
     for (const item of this.#items) this.#body.appendChild(this.#card(item, now));
+
+    // Under the cards, the same quiet button as Reports'.
+    const foot = div('effect__foot');
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'effect__restart';
+    reset.title = 'Erase every outcome. The jobs stay in Reports.';
+    twoClicks(reset, 'delete all', 'erase everything? click again', () => this.#act.onReset());
+    foot.appendChild(reset);
+    this.#body.appendChild(foot);
   }
 
   #card(item: EffectItem, now: number): HTMLElement {
@@ -339,6 +354,13 @@ export class Effect {
     dot.style.background = hex(PROVIDER_COLOR[item.provider]);
     head.append(dot, span('effect__meta', headlineOf(item)));
     card.appendChild(head);
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'effect__del';
+    del.title = 'Erase this outcome. The job stays in Reports.';
+    twoClicks(del, 'delete', 'erase it? click again', () => this.#act.onDelete(item.jobId));
+    head.appendChild(del);
 
     card.appendChild(span('effect__summary', item.summary));
     if (item.workDid) card.appendChild(span('effect__did', `→ ${item.workDid}`));

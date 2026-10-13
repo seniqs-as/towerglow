@@ -659,6 +659,7 @@ const reports = new Reports(document.body, reportsBtn, {
   onWatch: (id) => socket?.send({ t: 'job.watch', id }),
   onOpen: (id, index) => socket?.send({ t: 'job.open', id, index }),
   onReset: () => socket?.send({ t: 'jobs.reset' }),
+  onDelete: (id) => socket?.send({ t: 'job.delete', id }),
 });
 
 /**
@@ -672,6 +673,8 @@ const effectBtn = document.getElementById('effect-open')!;
 const effect = new Effect(document.body, effectBtn, {
   onRead: () => socket?.send({ t: 'effect.read' }),
   onJudge: (id) => socket?.send({ t: 'effect.judge', id }),
+  onDelete: (id) => socket?.send({ t: 'effect.delete', id }),
+  onReset: () => socket?.send({ t: 'effects.reset' }),
 });
 
 /**

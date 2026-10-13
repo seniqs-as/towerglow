@@ -101,6 +101,11 @@ CEOs started. Avoid `kill -9`: it skips that and leaves them behind.
 To restart, stop, wait a second, and start again. The server does not look
 for a free port: if 7317 is still taken it exits with `EADDRINUSE`.
 
+A running server keeps the code it was started with: after an update, restart
+it. With the CEOs, stopping the server stops their workers, and a task that
+was running comes back as failed, to retry or skip: restart when no task is
+running.
+
 ## Check
 
 ```bash
