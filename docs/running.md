@@ -49,6 +49,10 @@ In the background, so it survives closing the window:
 nohup node bin/towerglow.mjs start > ~/.towerglow/logs/server.log 2>&1 &
 ```
 
+Like every command here, it is run from the folder you cloned: from anywhere
+else `bin/towerglow.mjs` is not found, and the redirection has by then
+emptied the log of a server that is already running.
+
 The server keeps no log of its own: everything goes to its output, so a
 background start without the redirection loses it.
 
@@ -91,12 +95,14 @@ in your environment puts on pay-as-you-go billing: see
 ## Stop and restart
 
 ```bash
-pkill -f towerglow.mjs                  # by name
-kill "$(lsof -ti tcp:7317)"             # or by port
+pkill -f towerglow.mjs                              # by name
+kill "$(lsof -nP -tiTCP:7317 -sTCP:LISTEN)"         # or by port
 ```
 
 Both ask the server to shut down cleanly, which also stops the processes the
-CEOs started. Avoid `kill -9`: it skips that and leaves them behind.
+CEOs started. Avoid `kill -9`: it skips that and leaves them behind. By port,
+ask for the process that listens (`-sTCP:LISTEN`): a plain `lsof -ti tcp:7317`
+also names the browser that has the page open.
 
 To restart, stop, wait a second, and start again. The server does not look
 for a free port: if 7317 is still taken it exits with `EADDRINUSE`.

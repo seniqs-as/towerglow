@@ -199,6 +199,36 @@ export function readLastPlan(files: readonly string[], policy: PathPolicy, maxFi
   return null;
 }
 
+/**
+ * The freshest quota reading that names a window among these rollouts,
+ * newest first.
+ *
+ * The newest rollout is not always the one that holds it. Measured on
+ * 2026-10-13: a session that had handed its work to subagents left a rollout
+ * with no `rate_limits` record in its tail, while its subagents' rollouts,
+ * written half an hour earlier, carried the 5h at 99% and the 7d at 15%. The
+ * server had read those live; restarted, it looked at the newest rollout
+ * alone, and the CODEX row came back with its plan and no bars until Codex
+ * ran again. The plan was already looked for in the rollouts before
+ * (`readLastPlan`); the windows were not.
+ *
+ * The latest by its own timestamp, not the first found: a rollout written to
+ * more recently can hold an older reading in its tail.
+ */
+export function readLastWindows(
+  files: readonly string[],
+  policy: PathPolicy,
+  maxFiles = 20,
+): Extract<RolloutEvent, { kind: 'limits' }> | null {
+  let best: Extract<RolloutEvent, { kind: 'limits' }> | null = null;
+  for (const file of files.slice(0, maxFiles)) {
+    const ev = readLastLimits(file, policy);
+    if (!ev || ev.windows.length === 0) continue;
+    if (!best || ev.atMs > best.atMs) best = ev;
+  }
+  return best;
+}
+
 /** The most recently written rollout, however old it is. */
 export function newestRollout(codexDir: string, policy: PathPolicy): RolloutMeta | null {
   const all = discoverRollouts(codexDir, policy, 0);

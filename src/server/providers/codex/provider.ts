@@ -5,7 +5,7 @@ import type { ParseStats } from '../../parse/records.ts';
 import { fileIdFor, projectIdFor, redactRelPath } from '../../state/ids.ts';
 import { Tailer } from '../../watch/tailer.ts';
 import { CodexStore } from './store.ts';
-import { discoverRollouts, newestRollout, parseRolloutLine, readLastLimits, readLastPlan } from './rollouts.ts';
+import { discoverRollouts, newestRollout, parseRolloutLine, readLastLimits, readLastPlan, readLastWindows } from './rollouts.ts';
 import type { RolloutMeta } from './rollouts.ts';
 import type { LiveSession, Provider, ProviderContext } from '../types.ts';
 import type { PathPolicy } from '../../paths.ts';
@@ -21,6 +21,8 @@ const POLL_MS = 900;
 const PID_REFRESH_MS = 30_000;
 /** A rollout left untouched this long is no longer a live session. */
 const LIVE_WINDOW_MS = 30 * 60_000;
+/** How far back the quota is looked for at start: the longest window Codex names is seven days. */
+const SEED_WINDOW_MS = 7 * 86_400_000;
 /** After a turn closes, how long it stays "active" before it waits again. */
 const SETTLE_MS = 4000;
 
@@ -172,16 +174,21 @@ export class CodexProvider implements Provider {
    * staying silent until you run a turn. If a live session later sends a
    * fresher one, that one replaces it.
    *
-   * The plan alone is worth sending, once: it is what makes the tool's row
-   * appear at all, and the windows may only be in an older rollout than this
-   * one. Nothing is erased by it -- the model merges readings.
+   * The windows from the rollouts of the last week, newest first: the newest
+   * one may name none (`readLastWindows`), and a reading older than a week
+   * names no window that is still open. The plan alone is worth sending,
+   * once: it is what makes the tool's row appear at all. Nothing is erased by
+   * it -- the model merges readings.
    */
   #seedLimits(): void {
     if (this.#limitsSeeded) return;
     this.#limitsSeeded = true;
     const newest = newestRollout(this.#opts.codexDir, this.#opts.policy);
     if (!newest) return;
-    const ev = readLastLimits(newest.file, this.#opts.policy);
+    const recent = discoverRollouts(this.#opts.codexDir, this.#opts.policy, Date.now() - SEED_WINDOW_MS)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .map((m) => m.file);
+    const ev = readLastWindows(recent, this.#opts.policy) ?? readLastLimits(newest.file, this.#opts.policy);
     // The plan from an older rollout when this one never names it.
     const plan = ev?.plan ?? readLastPlan(
       discoverRollouts(this.#opts.codexDir, this.#opts.policy, 0)

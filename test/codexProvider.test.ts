@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { CodexProvider } from '../src/server/providers/codex/provider.ts';
-import { parseRolloutLine, readLastLimits, readLastPlan, readMeta } from '../src/server/providers/codex/rollouts.ts';
+import { parseRolloutLine, readLastLimits, readLastPlan, readLastWindows, readMeta } from '../src/server/providers/codex/rollouts.ts';
 import type { DeltaEvent } from '../src/shared/protocol.ts';
 import type { LiveSession } from '../src/server/providers/types.ts';
 import { assertSafe } from '../src/server/parse/redact.ts';
@@ -406,3 +406,79 @@ test('a chat and its guardian never swap context', async () => {
   assert.equal(sessions[0]!.model, 'gpt-6-astra', 'the guardian rollout was attached in place of the chat');
   assert.equal(sessions[0]!.contextPct, null, 'the guardian context landed on the chat');
 });
+
+/*
+ * The bars that did not come back after a restart.
+ *
+ * Field case, 2026-10-13: the newest rollout was a session that had handed
+ * its work to subagents and held no `rate_limits` in its tail; the subagents'
+ * rollouts, written half an hour before it, carried the 5h at 99% and the 7d
+ * at 15%. The server had read those live. Restarted, it read the newest
+ * rollout alone: the CODEX row kept its plan and lost its bars.
+ */
+function quotaDir(): { dir: string; day: string; policy: { claudeDir: string; codexDir: string; homeDir: string } } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-codex-seed-'));
+  const now = new Date();
+  const day = path.join(dir, 'sessions', String(now.getUTCFullYear()), String(now.getUTCMonth() + 1).padStart(2, '0'), String(now.getUTCDate()).padStart(2, '0'));
+  fs.mkdirSync(day, { recursive: true });
+  return { dir, day, policy: { claudeDir: '/nowhere/.claude', codexDir: dir, homeDir: '/Users/tester' } };
+}
+
+const quota = (used5h: number, used7d: number, at: number): string => line({
+  timestamp: iso(at), type: 'event_msg',
+  payload: {
+    type: 'token_count', info: { model_context_window: 258400 },
+    rate_limits: {
+      limit_id: 'codex', plan_type: 'plus',
+      primary: { used_percent: used5h, window_minutes: 300, resets_at: Math.round(at / 1000) + 3600 },
+      secondary: { used_percent: used7d, window_minutes: 10080, resets_at: Math.round(at / 1000) + 86400 },
+    },
+  },
+});
+
+/** A rollout with its own session id, last written at `mtime`. */
+function rollout(day: string, id: string, body: string, mtime: number): string {
+  const file = path.join(day, `rollout-2026-10-13T14-49-08-${id}.jsonl`);
+  fs.writeFileSync(file, line({
+    timestamp: iso(mtime - 60_000), type: 'session_meta',
+    payload: { session_id: id, cwd: PROJECT, cli_version: '0.154.0' },
+  }) + body);
+  fs.utimesSync(file, mtime / 1000, mtime / 1000);
+  return file;
+}
+
+test('the quota is read from the rollout that holds it, not only from the newest one', () => {
+  const { day, policy } = quotaDir();
+  const now = Date.now();
+  const silent = rollout(day, '01a00000-0000-7000-8000-00000000000a',
+    line({ timestamp: iso(now - 100 * 60_000), type: 'event_msg', payload: { type: 'agent_message', message: 'handed over' } }), now - 100 * 60_000);
+  const sub = rollout(day, '01a00000-0000-7000-8000-00000000000b', quota(99, 15, now - 140 * 60_000), now - 140 * 60_000);
+  const older = rollout(day, '01a00000-0000-7000-8000-00000000000c', quota(53, 8, now - 260 * 60_000), now - 260 * 60_000);
+
+  assert.equal(readLastLimits(silent, policy), null, 'the newest names no quota at all');
+  const ev = readLastWindows([silent, sub, older], policy);
+  assert.equal(ev?.windows.length, 2);
+  assert.equal(ev?.windows[0]?.usedPercent, 99, 'the freshest reading that names a window');
+  assert.equal(ev?.windows[1]?.usedPercent, 15);
+  // By its own time, whatever the order of the files: a rollout written to
+  // later can hold an older reading in its tail.
+  assert.equal(readLastWindows([older, sub, silent], policy)?.windows[0]?.usedPercent, 99);
+  assert.equal(readLastWindows([silent], policy), null, 'never invented');
+  assert.equal(readLastWindows([silent, sub, older], policy, 1), null, 'and only as far as it is told to look');
+});
+
+test('a server that starts shows Codex\'s bars even when the newest rollout names none', async () => {
+  const { dir, day } = quotaDir();
+  const now = Date.now();
+  rollout(day, '01a00000-0000-7000-8000-00000000000a',
+    line({ timestamp: iso(now - 100 * 60_000), type: 'event_msg', payload: { type: 'agent_message', message: 'handed over' } }), now - 100 * 60_000);
+  rollout(day, '01a00000-0000-7000-8000-00000000000b', quota(99, 15, now - 140 * 60_000), now - 140 * 60_000);
+
+  const { events } = await collect(dir);
+  const seeded = events.find((e) => e.t === 'limits' && e.limits.provider === 'codex');
+  assert.ok(seeded && seeded.t === 'limits', 'the tool\'s row is seeded at start');
+  if (!seeded || seeded.t !== 'limits') return;
+  assert.deepEqual(seeded.limits.windows.map((w) => w.usedPercent), [99, 15], 'with the windows of the rollout before');
+  assert.equal(seeded.limits.plan, 'plus');
+});
+
