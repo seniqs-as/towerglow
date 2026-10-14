@@ -176,7 +176,7 @@ function cityLegend(): LegendSection[] {
     section('What a tool call is doing', [
       ...TOOL_KINDS.map(([cat, name, meaning]) => swatch(CITY.TOOL_COLOR[cat], name, meaning)),
       note('One colour, three places: the window on the tower, the spark that leaves it when the call starts, and the slice in the tool mix.'),
-      note('Where the spark goes says the kind of work: down below the ground for a shell command, high above the tower for the web, out to the side for a subagent, across to another tower for a message to the agent working there, and just over the top for everything else.'),
+      note('Where the spark goes says the kind of work: high above the tower for the web, out to the side for a subagent, across to another tower for a message to the agent working there, and just over the top for everything else. A shell command sends none: its window says it.'),
     ]),
     section('Rings over the tower', [
       ...GIT_KINDS.map(([kind, meaning]) => swatch(CITY.RING_COLOR[kind], kind, meaning)),

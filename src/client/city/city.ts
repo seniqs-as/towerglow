@@ -264,10 +264,16 @@ export class City {
 
   /**
    * From tool call to pulse. The direction tells the kind of work: up for
-   * what leaves the city, down for the shell that lives under the ground,
-   * across to the neighbour when one agent talks to another.
+   * what leaves the city, across to the neighbour when one agent talks to
+   * another.
+   *
+   * A shell command sends none (the user's call, 2026-10-14). Its spark left
+   * the tower at mid-height and fell below the ground, and through the glass
+   * it read as a lit window dropping down the facade -- the most common call
+   * there is, and for Codex nearly every one. Its window already says it.
    */
   #pulse(event: Extract<DeltaEvent, { t: 'tool.start' }>, sessions: ReadonlyMap<string, SessionInfo>): void {
+    if (event.cat === 'exec') return;
     const session = sessions.get(event.sessionId);
     if (!session) return;
     const base = this.#buildings.positionOf(session.projectId);
@@ -289,10 +295,6 @@ export class City {
       }
     }
     switch (event.cat) {
-      case 'exec':
-        // The shell lives in the plant room underground.
-        this.#to.set(base.x, -7, base.z);
-        break;
       case 'net':
         // To the antenna on the roof and beyond: the one place where
         // something crosses the city's border.

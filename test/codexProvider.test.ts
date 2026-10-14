@@ -9,6 +9,7 @@ import type { DeltaEvent } from '../src/shared/protocol.ts';
 import type { LiveSession } from '../src/server/providers/types.ts';
 import { assertSafe } from '../src/server/parse/redact.ts';
 import { createStats } from '../src/server/parse/records.ts';
+import { categoryOf } from '../src/shared/toolCategories.ts';
 
 const SECRET = 'sk-live-supersecret-must-never-get-out';
 const PROJECT = '/Users/tester/code/webapp';
@@ -156,6 +157,18 @@ test('a command yields only its binary, and reasoning yields nothing', async () 
   assert.ok(end && end.t === 'tool.end');
   assert.equal(end.durationMs, 842, 'duration from {secs, nanos}');
   assert.equal(events.some((e) => e.t === 'tool.start' && e.name === 'Reasoning'), false);
+});
+
+test('the page reads from the name of a Codex call the same category the server sends', async () => {
+  // The spark reads `cat`, the window and the lamp read the name: when the two
+  // disagreed, a Codex shell command left in red and lit a grey window.
+  const { events } = await collect(fakeCodexDir({ nowMs: Date.now(), closeTurn: true }));
+  const calls = events.filter((e) => e.t === 'tool.start');
+  assert.deepEqual(calls.map((e) => e.t === 'tool.start' && e.cat), ['exec', 'edit']);
+  for (const e of calls) {
+    assert.ok(e.t === 'tool.start');
+    assert.equal(categoryOf(e.name), e.cat, `${e.name}: the window would not match the spark`);
+  }
 });
 
 test('a file change lights the right window, only inside the project', async () => {

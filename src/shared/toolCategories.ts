@@ -8,7 +8,32 @@ import type { ToolCategory } from './protocol.ts';
  * An unknown tool ends up in `other` instead of breaking something: names
  * change across Claude Code versions, and this list ages.
  */
+
+/**
+ * Codex's calls, by the `item.type` its rollout writes: it names the kind of
+ * item, not the tool. The provider reads this table to know which items are
+ * calls at all -- reasoning, messages, a compaction or a subagent's notice
+ * light nothing -- and `categoryOf` reads it too, because the page colours a
+ * window from the call's NAME. Measured on 2026-10-14: the provider had a
+ * table of its own, the page knew only Claude Code's names, and every Codex
+ * call lit its window in the grey of `other` beside the white of the turn --
+ * a Codex tower never showed a colour, while its sparks, which read the
+ * server's category, did.
+ */
+export const CODEX_CALLS: Readonly<Record<string, ToolCategory>> = {
+  CommandExecution: 'exec',
+  FileChange: 'edit',
+  ImageView: 'read',
+  // `kind: "web.search"`, which also covers opening a page.
+  Extension: 'net',
+  McpToolCall: 'mcp',
+  TodoList: 'plan',
+  // Spawning a subagent, waiting on it, writing to it.
+  CollabAgentToolCall: 'agent',
+};
+
 const EXACT: Record<string, ToolCategory> = {
+  ...CODEX_CALLS,
   Read: 'read',
   NotebookRead: 'read',
   Edit: 'edit',

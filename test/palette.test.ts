@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { lightColor } from '../src/client/world/palette.ts';
 import type { Light } from '../src/client/state/lights.ts';
 import { PROVIDER_COLOR, SKILL_COLOR, TOOL_COLOR } from '../src/client/world/palette.ts';
+import { lightColor as cityLightColor } from '../src/client/city/windows.ts';
+import * as CITY from '../src/client/city/palette.ts';
+import { CODEX_CALLS } from '../src/shared/toolCategories.ts';
 
 /**
  * The colour of a window is the ONLY thing that says what work is inside it:
@@ -39,6 +42,19 @@ test('a call does not take the colour of the provider (Claude Code, Codex) that 
 test('the turn keeps the colour of its provider: it is the session at the desk', () => {
   assert.equal(lightColor(light('turn', null)), PROVIDER_COLOR.claude);
   assert.equal(lightColor({ ...light('turn', null), provider: 'codex' }), PROVIDER_COLOR.codex);
+});
+
+test('a Codex call lights its window in the colour of its work, in both views', () => {
+  // Measured on 2026-10-14: the page knew only Claude Code's tool names, so
+  // `CommandExecution`, `FileChange` and the rest all came out `other`, and a
+  // Codex tower showed only grey windows beside the white of its turn.
+  for (const [item, cat] of Object.entries(CODEX_CALLS)) {
+    const codex = { ...light('tool', item), provider: 'codex' as const };
+    assert.equal(lightColor(codex), TOOL_COLOR[cat], `${item} in the colony`);
+    assert.equal(cityLightColor(codex), CITY.TOOL_COLOR[cat], `${item} in the city`);
+    assert.notEqual(cat, 'other', `${item} is a call we can place`);
+  }
+  assert.equal(cityLightColor({ ...light('tool', 'CommandExecution'), provider: 'codex' }), CITY.TOOL_COLOR.exec);
 });
 
 test('an unknown tool still lights the window', () => {

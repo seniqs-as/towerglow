@@ -1,5 +1,6 @@
 import * as path from 'node:path';
-import type { DeltaEvent, SessionStatus, TargetRef, ToolCategory } from '../../../shared/protocol.ts';
+import type { DeltaEvent, SessionStatus, TargetRef } from '../../../shared/protocol.ts';
+import { CODEX_CALLS } from '../../../shared/toolCategories.ts';
 import { assertSafe, clampUnsafe } from '../../parse/redact.ts';
 import type { ParseStats } from '../../parse/records.ts';
 import { fileIdFor, projectIdFor, redactRelPath } from '../../state/ids.ts';
@@ -41,7 +42,6 @@ export interface CodexProviderOptions {
   stats: ParseStats;
 }
 
-/** Codex `item.type`s mapped onto the categories already in use. */
 /**
  * First line of the user's message, truncated. Never the whole body.
  *
@@ -67,18 +67,6 @@ function firstLineOf(item: Record<string, unknown>): string | null {
   const line = text.split('\n')[0]?.trim() ?? '';
   return line.length > 0 ? line.slice(0, 90) : null;
 }
-
-const CATEGORY: Record<string, ToolCategory | null> = {
-  CommandExecution: 'exec',
-  FileChange: 'edit',
-  Extension: 'net',
-  ImageView: 'read',
-  McpToolCall: 'mcp',
-  TodoList: 'plan',
-  Reasoning: null,
-  AgentMessage: null,
-  UserMessage: null,
-};
 
 interface Attached {
   meta: RolloutMeta;
@@ -425,7 +413,9 @@ export class CodexProvider implements Provider {
     atMs: number,
     item: Record<string, unknown>,
   ): DeltaEvent[] {
-    const cat = CATEGORY[itemType];
+    // The shared table, the one the page colours the window from: two tables
+    // would agree only until the next item type.
+    const cat = CODEX_CALLS[itemType];
     if (!cat) return [];
 
     const cwd = a.meta.cwd;
