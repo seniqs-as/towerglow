@@ -299,6 +299,37 @@ test('an interrupted turn is over: the session is idle, not working', async () =
   assert.equal(sessions[0]!.status, 'idle', 'turn_aborted left the turn open');
 });
 
+test('a Codex compaction is told by the head of a line too big to parse, and only its time', async () => {
+  // The record carries the whole replacement history: 60 KB to 2.5 MB on
+  // this machine on 2026-10-14, past the guard that drops a line unparsed.
+  const now = Date.now();
+  const dir = fakeCodexDir({ nowMs: now, closeTurn: true });
+  const day = path.join(dir, 'sessions', '2026', '09', '10');
+  const file = path.join(day, fs.readdirSync(day)[0]!);
+  const at = now - 200;
+  const record = line({ timestamp: iso(at), ordinal: 9, type: 'compacted',
+    payload: { message: '', replacement_history: [{ type: 'message', role: 'user',
+      content: [{ type: 'input_text', text: SECRET.repeat(20_000) }] }], window_number: 1 } });
+  assert.ok(record.length > 256 * 1024, 'the case is not past the size guard');
+  fs.appendFileSync(file, record);
+
+  const { sessions, events } = await collect(dir);
+  assert.equal(sessions[0]!.compactedAt, at);
+  assert.equal(JSON.stringify({ sessions, events }).includes(SECRET), false, 'the history got out');
+});
+
+test('a compaction record is recognised with or without its ordinal', () => {
+  const at = '2026-09-18T20:57:09.407Z';
+  const tail = ',"payload":{"message":"","replacement_history":[]}}';
+  assert.deepEqual(parseRolloutLine(`{"timestamp":"${at}","ordinal":879,"type":"compacted"${tail}`),
+    { kind: 'compacted', atMs: Date.parse(at) });
+  assert.deepEqual(parseRolloutLine(`{"timestamp":"${at}","type":"compacted"${tail}`),
+    { kind: 'compacted', atMs: Date.parse(at) });
+  // The encrypted item a forked chat starts from is history, not a compaction now.
+  assert.equal(parseRolloutLine(JSON.stringify({ timestamp: at, ordinal: 1, type: 'response_item',
+    payload: { type: 'compaction', id: 'cmp_1', encrypted_content: 'gAAAA' } })), null);
+});
+
 test('the Codex context comes from token_count, as a share of the request', () => {
   // Same record as the quotas, different recipients: the context belongs to
   // the session, the quota to the account. Returning only one lost the other.

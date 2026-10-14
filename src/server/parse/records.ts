@@ -71,6 +71,13 @@ export interface ContextRecord {
   tokensLeft: number;
 }
 
+/** Claude Code compacted the conversation: `compact_boundary`. Only its time. */
+export interface CompactRecord {
+  kind: 'compact';
+  sessionId: string;
+  timestamp: number;
+}
+
 export interface TitleRecord {
   kind: 'title';
   sessionId: string;
@@ -121,7 +128,7 @@ export interface CostStateRecord {
 
 export type Record_ =
   | AssistantRecord | ToolResultRecord | PromptRecord
-  | TurnEndRecord | AgentDoneRecord | ContextRecord | TitleRecord | RecapRecord
+  | TurnEndRecord | AgentDoneRecord | ContextRecord | CompactRecord | TitleRecord | RecapRecord
   | CostStateRecord;
 
 export interface ParseStats {
@@ -362,6 +369,10 @@ export function parseLine(line: string, stats: ParseStats): Record_ | null {
       if (raw['subtype'] === 'away_summary') {
         const recap = str(raw['content']);
         return recap ? { kind: 'recap', sessionId, timestamp: timeOf(raw), recap } : null;
+      }
+      // The session's own conversation, not a subagent's inside it.
+      if (raw['subtype'] === 'compact_boundary') {
+        return raw['isSidechain'] === true ? null : { kind: 'compact', sessionId, timestamp: timeOf(raw) };
       }
       if (raw['subtype'] !== 'turn_duration') return null;
       const durationMs = typeof raw['durationMs'] === 'number' ? raw['durationMs'] : 0;

@@ -198,7 +198,7 @@ function session(id: string, projectId: string, provider: 'claude' | 'codex'): S
     permissionMode: null, isCeo: false, spawnedByCeo: null, provider,
     statusConfidence: 'reported', startedAt: T0, lastActivityAt: T0, statusSince: T0,
     tokens: { in: 1000, out: 200, cacheRead: 9000, cacheWrite: 1000, thinking: 0 },
-    contextLeft: null, contextPct: 42, turns: 4, toolCalls: 12,
+    contextLeft: null, contextPct: 42, compactedAt: null, turns: 4, toolCalls: 12,
     lastTurnMs: 3000, turnsMs: 12000, reasoningMs: 500,
     recap: null, recapAt: null, recapInherited: false,
     activityTool: null, activityTarget: null, agentsActive: 0, deskIndex: 0,

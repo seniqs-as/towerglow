@@ -22,6 +22,12 @@ const RE_ROLLOUT = /^rollout-.+\.jsonl$/;
 /** Beyond this size a line is not even parsed: tool payloads reach megabytes
  *  and they are 92% of a rollout's bytes. */
 const MAX_LINE = 256 * 1024;
+/**
+ * The head of a compaction record. The record carries the whole replacement
+ * history -- 60 KB to 2.5 MB across the 14 on this machine on 2026-10-14 --
+ * so it is told by its first bytes, before the size guard, and never parsed.
+ */
+const RE_COMPACTED = /^\{"timestamp":"([^"]{1,40})",(?:"ordinal":\d+,)?"type":"compacted"/;
 
 export interface RolloutMeta {
   file: string;
@@ -53,6 +59,8 @@ export type RolloutEvent =
       turnId: string | null;
       item: Record<string, unknown>;
     }
+  /** The conversation was compacted: only when. */
+  | { kind: 'compacted'; atMs: number }
   | { kind: 'tokens'; total: number; atMs: number; delta: TokenTotals }
   | { kind: 'model'; model: string }
   | {
@@ -282,6 +290,11 @@ export function discoverRollouts(codexDir: string, policy: PathPolicy, sinceMs: 
  * Never throws: the format is internal to Codex and changes between versions.
  */
 export function parseRolloutLine(line: string): RolloutEvent | null {
+  const compacted = RE_COMPACTED.exec(line.slice(0, 120));
+  if (compacted) {
+    const atMs = Date.parse(compacted[1]!);
+    return Number.isFinite(atMs) ? { kind: 'compacted', atMs } : null;
+  }
   // Defense even before parsing: a huge line is a tool output.
   if (line.length > MAX_LINE) return null;
 

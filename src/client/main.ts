@@ -1385,6 +1385,32 @@ function refreshLabels(): void {
     });
   }
 
+  // A compaction, in the commit caption's dress, over the badge of the
+  // session that compacted: two sessions on one tower are told apart. Below
+  // the project's name in rank: it stays an hour, and the name is the map.
+  const now = Date.now();
+  const shifts = badgeShifts();
+  compactCaptionsUntil = Infinity;
+  for (const session of store.sessions.values()) {
+    // `??`: a server older than the field sends none, and undefined is no time.
+    const at = session.compactedAt ?? null;
+    if (at === null || now - at >= COMPACT_CAPTION_MS) continue;
+    const anchor = anchorOf(session.projectId);
+    if (!anchor) continue;
+    compactCaptionsUntil = Math.min(compactCaptionsUntil, at + COMPACT_CAPTION_MS);
+    items.push({
+      id: `k:${session.id}`,
+      text: 'context compacted',
+      kind: 'commit',
+      position: anchor.position,
+      offsetY: anchor.offsetY,
+      lift: COMPACT_CAPTION_LIFT,
+      shift: shifts.get(session.id) ?? 0,
+      maxDistance: COMMIT_FLASH_DISTANCE,
+      priority: 4,
+    });
+  }
+
   // No nameplate next to the windows: neither the name of a skill nor the
   // type of a subagent. Who is working is told by the window's COLOUR; the
   // name is read by hovering over it (`describeLight`), it is not in the scene.
@@ -1405,6 +1431,41 @@ const BADGE_PITCH = 38;
 const BADGE_LIFT = 23 + 3 + 23;
 
 /**
+ * Where each session's badge sits across its building, in pixels. Several
+ * sessions on the same project sit on the same building: they have to be
+ * shifted apart, side by side and centred, otherwise they cover each other
+ * and only one shows.
+ */
+function badgeShifts(): Map<string, number> {
+  const perProject = new Map<string, number>();
+  for (const s of store.sessions.values()) {
+    perProject.set(s.projectId, (perProject.get(s.projectId) ?? 0) + 1);
+  }
+  const placed = new Map<string, number>();
+  const shifts = new Map<string, number>();
+  for (const s of store.sessions.values()) {
+    const total = perProject.get(s.projectId) ?? 1;
+    const index = placed.get(s.projectId) ?? 0;
+    placed.set(s.projectId, index + 1);
+    shifts.set(s.id, (index - (total - 1) / 2) * BADGE_PITCH);
+  }
+  return shifts;
+}
+
+/**
+ * How long "context compacted" stays over a session's badge: an hour (the
+ * user's call, 2026-10-14). A commit's caption lasts twelve seconds because
+ * the rings keep the history; a compaction has nothing else on screen but the
+ * context arc dropping, and a drop from 97% to 1% with no `/clear` read as a
+ * fault.
+ */
+const COMPACT_CAPTION_MS = 60 * 60_000;
+/** Over the badge it belongs to: the arc's top (`BADGE_LIFT` + 23) and a breath of 3. */
+const COMPACT_CAPTION_LIFT = BADGE_LIFT + 23 + 3;
+/** When the next caption on screen expires: nothing arrives from the server then. */
+let compactCaptionsUntil = Infinity;
+
+/**
  * One badge per session, on its building.
  *
  * There used to be a line of text here for every session. It said the same
@@ -1415,14 +1476,7 @@ const BADGE_LIFT = 23 + 3 + 23;
 function refreshBadges(): void {
   const items: BadgeItem[] = [];
   const now = Date.now();
-
-  // Several sessions on the same project sit on the same building: they have
-  // to be shifted apart, otherwise they cover each other and only one shows.
-  const perProject = new Map<string, number>();
-  for (const s of store.sessions.values()) {
-    perProject.set(s.projectId, (perProject.get(s.projectId) ?? 0) + 1);
-  }
-  const placed = new Map<string, number>();
+  const shifts = badgeShifts();
 
   for (const session of store.sessions.values()) {
     // Over the project's name, never on the astronaut: the glyph says how
@@ -1433,10 +1487,6 @@ function refreshBadges(): void {
     // floats a label's height above it.
     const anchor = anchorOf(session.projectId);
     if (!anchor) continue;
-
-    const total = perProject.get(session.projectId) ?? 1;
-    const index = placed.get(session.projectId) ?? 0;
-    placed.set(session.projectId, index + 1);
 
     // The stopwatch starts from when the current state began, so for a busy
     // session it measures the run in progress, not the session's age; for a
@@ -1452,8 +1502,7 @@ function refreshBadges(): void {
       provider: session.provider,
       state: badgeStateOf(crewStatus(session, notices.of(session.id, now), now)),
       inferred: session.statusConfidence === 'inferred',
-      // Side by side across the building, centred on it.
-      shift: (index - (total - 1) / 2) * BADGE_PITCH,
+      shift: shifts.get(session.id) ?? 0,
       hover: hoverText(session, elapsed),
       // Without a PID there is no terminal to find, but the project is still
       // there: the click opens a shell in it. With neither, the details.
@@ -1591,9 +1640,11 @@ function showCard(sessionId: string): void {
 // when it does: without this the bar kept last night's percentage until the
 // next session event, which on an idle morning never comes.
 window.setInterval(refreshSpend, 30_000);
-// A ring stays an hour: once a minute the ones that grew older go.
+// A ring and a compaction caption stay an hour: once a minute the ones that
+// grew older go.
 window.setInterval(() => {
   if (rings.prune(Date.now())) showRings();
+  if (Date.now() >= compactCaptionsUntil) refreshLabels();
 }, 60_000);
 
 // The stopwatch must keep running even when nothing arrives from the server.

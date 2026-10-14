@@ -218,7 +218,7 @@ test('a worker stuck on a prompt for half a minute is stopped, and the task beco
     kind: 'interactive', model: null, ccVersion: '', gitBranch: null, permissionMode: null, isCeo: false,
     spawnedByCeo: 'claude', provider: 'claude', statusConfidence: 'reported', startedAt: T0,
     lastActivityAt: since, statusSince: since, tokens: { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, thinking: 0 },
-    contextLeft: null, contextPct: null, turns: 0, toolCalls: 0, lastTurnMs: null, turnsMs: 0,
+    contextLeft: null, contextPct: null, compactedAt: null, turns: 0, toolCalls: 0, lastTurnMs: null, turnsMs: 0,
     reasoningMs: null, recap: null, recapAt: null, recapInherited: false, activityTool: null,
     activityTarget: null, agentsActive: 0, deskIndex: 0,
   });

@@ -288,7 +288,7 @@ function signs(where: string, wornBy: string): LegendSection {
     {
       kind: 'context',
       name: 'Context used',
-      meaning: 'the arc around the circle fills as the session uses up its context window; it pulses past 90%, when the session is about to compact',
+      meaning: 'the arc around the circle fills as the session uses up its context window; it pulses past 90%, when the session is about to compact. Once it has, "context compacted" stands over the circle for an hour',
     },
   ]);
 }

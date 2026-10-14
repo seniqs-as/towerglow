@@ -118,6 +118,8 @@ interface Attached {
   reasoningMs: number;
   /** Context window used by the last request, 0-100. */
   contextPct: number | null;
+  /** The last time Codex compacted the conversation. */
+  compactedAt: number | null;
 }
 
 /**
@@ -273,6 +275,7 @@ export class CodexProvider implements Provider {
       currentTask: null,
       reasoningMs: 0,
       contextPct: null,
+      compactedAt: null,
     };
 
     // The whole rollout is read: it is a few hundred KB net of tool outputs,
@@ -304,6 +307,9 @@ export class CodexProvider implements Provider {
     switch (ev.kind) {
       case 'model':
         a.model = ev.model;
+        return;
+      case 'compacted':
+        a.compactedAt = Math.max(a.compactedAt ?? 0, ev.atMs);
         return;
       case 'limits':
         // The context belongs to the SESSION, the quota to the ACCOUNT: they
@@ -429,6 +435,7 @@ export class CodexProvider implements Provider {
         statusSince: a.statusSince,
         reasoningMs: a.reasoningMs,
         contextPct: a.contextPct,
+        compactedAt: a.compactedAt,
       });
     }
     return out;

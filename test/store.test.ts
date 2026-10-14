@@ -18,7 +18,7 @@ function session(id: string, spawnedByCeo: 'claude' | null): SessionInfo {
     kind: 'interactive', model: null, ccVersion: '', gitBranch: null, permissionMode: null, isCeo: false,
     spawnedByCeo, provider: 'claude', statusConfidence: 'reported', startedAt: T0,
     lastActivityAt: T0, statusSince: T0, tokens: { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, thinking: 0 },
-    contextLeft: null, contextPct: null, turns: 0, toolCalls: 0, lastTurnMs: null, turnsMs: 0,
+    contextLeft: null, contextPct: null, compactedAt: null, turns: 0, toolCalls: 0, lastTurnMs: null, turnsMs: 0,
     reasoningMs: null, recap: null, recapAt: null, recapInherited: false, activityTool: null,
     activityTarget: null, agentsActive: 0, deskIndex: 0,
   };

@@ -21,7 +21,7 @@ function session(id: string, status: SessionStatus, statusSince: number, provide
     kind: 'interactive', model: 'opus', ccVersion: '2.1.0', gitBranch: null, permissionMode: null,
     isCeo: false, provider, statusConfidence: 'reported', startedAt: 0, lastActivityAt: statusSince,
     statusSince, tokens: { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, thinking: 0 },
-    contextLeft: null, contextPct: null, turns: 0, toolCalls: 0, lastTurnMs: null, turnsMs: 0,
+    contextLeft: null, contextPct: null, compactedAt: null, turns: 0, toolCalls: 0, lastTurnMs: null, turnsMs: 0,
     reasoningMs: null, activityTool: null, activityTarget: null, agentsActive: 0, deskIndex: 0,
   };
 }

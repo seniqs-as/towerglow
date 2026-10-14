@@ -11,6 +11,13 @@ export interface LabelItem {
   /** Rises above the building: without this the nameplate ends up inside the volume. */
   offsetY: number;
   /**
+   * Pixels up and across from that point, as a badge has: what hangs over a
+   * session's badge must clear it at every distance, which no world offset
+   * does.
+   */
+  lift?: number;
+  shift?: number;
+  /**
    * The nameplate takes the mouse and opens a menu.
    *
    * Applies to projects: it is the only way to reach the ones that are OFF,
@@ -240,8 +247,8 @@ export class Labels implements Layer {
     this.#v.project(this.#camera);
     if (this.#v.x < -1 || this.#v.x > 1 || this.#v.y < -1 || this.#v.y > 1) return null;
 
-    const x = (this.#v.x * 0.5 + 0.5) * w;
-    const y = (-this.#v.y * 0.5 + 0.5) * h;
+    const x = (this.#v.x * 0.5 + 0.5) * w + (item.shift ?? 0);
+    const y = (-this.#v.y * 0.5 + 0.5) * h - (item.lift ?? 0);
     if (x < 60 || x > w - 60 || y < 24 || y > h - 12) return null;
     if (x < HUD_W && y < HUD_H) return null;
 

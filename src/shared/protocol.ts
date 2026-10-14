@@ -46,6 +46,8 @@
 //     sent them, so an old one misses nothing.
 // v9 (additions, same version): `snapshot.rings`, the git events on the
 //     towers. An old client ignores it and keeps drawing what it is sent live.
+// v9 (additions, same version): `session.compactedAt`. An old client ignores
+//     it and shows no caption.
 export const PROTOCOL_VERSION = 9;
 
 /** Beyond this length, a string in a DeltaEvent is a redaction bug. */
@@ -192,6 +194,16 @@ export interface SessionInfo {
    * until anything is known about it, instead of faking a zero.
    */
   contextPct: number | null;
+  /**
+   * When the tool last compacted the session: the conversation replaced by
+   * its own summary, on its own when the window fills up (or by `/compact`).
+   *
+   * Without it the only trace was `contextPct` dropping, and a fall from 97%
+   * to 1% with no `/clear` read as a fault (the user's question, 2026-10-14).
+   * The time only: Claude Code's `compact_boundary`, Codex's `compacted`
+   * record. `null` when no compaction has been read in what the server read.
+   */
+  compactedAt: number | null;
   turns: number;
   toolCalls: number;
   /**

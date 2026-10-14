@@ -29,6 +29,8 @@ export interface LiveSession {
   reasoningMs?: number | null;
   /** Context window in use, 0-100, if the tool exposes it. */
   contextPct?: number | null;
+  /** The last compaction read, when the provider reads it itself (Codex). */
+  compactedAt?: number | null;
   /**
    * The turn is over but a shell runs in the background. Whether that is
    * work depends on who started it, which only the transcript says: the

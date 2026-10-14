@@ -355,6 +355,7 @@ export class World {
           tokens: { ...ZERO_TOKENS },
           contextLeft: null,
           contextPct: s.contextPct ?? this.#takeContext(s.sessionId),
+          compactedAt: s.compactedAt ?? null,
           turns: 0,
           toolCalls: 0,
           lastTurnMs: null,
@@ -387,6 +388,10 @@ export class World {
       if (reasoning !== null && reasoning !== existing.reasoningMs) patch.reasoningMs = reasoning;
       const ctx = s.contextPct ?? null;
       if (ctx !== null && ctx !== existing.contextPct) patch.contextPct = ctx;
+      // Only a provider that reads it says it: Claude Code's comes from the
+      // transcript, and a registry pass knows nothing of it.
+      const compacted = s.compactedAt ?? null;
+      if (compacted !== null && compacted !== existing.compactedAt) patch.compactedAt = compacted;
       const label = this.#opts.redactPaths ? redactName(s.label) : s.label;
       if (existing.label !== label) patch.label = label;
 

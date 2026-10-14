@@ -286,6 +286,10 @@ export function project(rec: Record_, ctx: RedactContext, opts: RedactOptions): 
       out.push({ t: 'context', sessionId: rec.sessionId, at: rec.timestamp, tokensLeft: rec.tokensLeft });
       return out;
 
+    case 'compact':
+      out.push({ t: 'session.update', id: rec.sessionId, patch: { compactedAt: rec.timestamp }, at: rec.timestamp });
+      return out;
+
     case 'cost_state':
       // All scalars declared by the tool: no string except the model's name,
       // which is an identifier like `model` in `usage`.

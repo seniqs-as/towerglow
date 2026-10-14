@@ -26,7 +26,7 @@ the code that reads sessions.
   target (a file path, the first word of a shell command), the model, token
   counts, the length of your prompts (never their text), the session title
   Claude Code generates, its "while you were away" summary, durations and
-  cost figures. The text of Claude's replies and of its thinking is never
+  cost figures, and when the conversation was compacted. The text of Claude's replies and of its thinking is never
   extracted.
 - `~/.claude.json`: the list of your projects, and the name of your plan
   (for example "max 5x"), nothing else.
@@ -36,7 +36,9 @@ the code that reads sessions.
 **Codex** (`~/.codex`, or `--codex-dir`):
 
 - `sessions/.../rollout-*.jsonl`: the session logs. Kept: model, token usage,
-  rate limits, context, turn start and end, the binary name of commands, the
+  rate limits, context and when it was compacted (only the time: the
+  compaction record holds the conversation and is never parsed), turn start
+  and end, the binary name of commands, the
   paths and line counts of file changes, and the **first line of your last
   prompt**, which Codex sessions use as their title.
 - `session_index.jsonl`: thread names. `config.toml`: only the project paths.
@@ -62,7 +64,8 @@ place (`src/server/parse/redact.ts`) with a length cap on every string:
 - projects: name, file count, branch, last commit subject (the folder path
   stays in the server);
 - sessions: label, title, the "while you were away" summary, status, model,
-  token counts, durations, the tool in use and its target;
+  token counts, context used and when it was last compacted, durations, the
+  tool in use and its target;
 - for each tool call: the tool's name and target, as above; for a shell
   command, only its first word;
 - usage: token counts, and your quota windows when they are known.
