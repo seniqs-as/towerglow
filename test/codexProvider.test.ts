@@ -246,6 +246,59 @@ test('a turn still open reports no duration', async () => {
   assert.equal(events.filter((e) => e.t === 'turn.end').length, 0);
 });
 
+/**
+ * A chat as Codex Desktop 0.155 leaves it: a turn that started a dev server
+ * and closed `workedAgoMs` ago, then maybe a second turn, then the dev
+ * server's exit, written now under the first turn's id.
+ */
+function backgroundExitDir(nowMs: number, workedAgoMs: number, next: 'none' | 'aborted'): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-codex-late-'));
+  const day = path.join(dir, 'sessions', '2026', '10', '13');
+  fs.mkdirSync(day, { recursive: true });
+  const worked = nowMs - workedAgoMs;
+  let body = '';
+  body += line({ timestamp: iso(worked - 60_000), type: 'session_meta',
+    payload: { session_id: SID, cwd: PROJECT, cli_version: '0.155.0' } });
+  body += line({ timestamp: iso(worked - 50_000), type: 'event_msg',
+    payload: { type: 'task_started', turn_id: 'turn-1' } });
+  body += line({ timestamp: iso(worked - 40_000), type: 'event_msg',
+    payload: { type: 'item_completed', turn_id: 'turn-1', completed_at_ms: worked - 40_000,
+      item: { type: 'FileChange', id: 'fc-1', status: 'completed',
+        changes: [{ path: `${PROJECT}/src/app.ts`, kind: { type: 'modify' }, diff: 'a' }] } } });
+  body += line({ timestamp: iso(worked), type: 'event_msg',
+    payload: { type: 'task_complete', turn_id: 'turn-1', duration_ms: 50_000 } });
+  if (next === 'aborted') {
+    body += line({ timestamp: iso(nowMs - 20_000), type: 'event_msg',
+      payload: { type: 'task_started', turn_id: 'turn-2' } });
+    body += line({ timestamp: iso(nowMs - 10_000), type: 'event_msg',
+      payload: { type: 'turn_aborted', turn_id: 'turn-2', reason: 'interrupted', duration_ms: 10_000 } });
+  }
+  body += line({ timestamp: iso(nowMs - 500), type: 'event_msg',
+    payload: { type: 'item_completed', turn_id: 'turn-1',
+      started_at_ms: worked - 45_000, completed_at_ms: nowMs - 500,
+      item: { type: 'CommandExecution', id: 'exec-dev', command: ['/bin/bash', '-lc', 'npm run dev'],
+        source: 'unified_exec_startup', status: 'failed', exit_code: 137 } } });
+  fs.writeFileSync(path.join(day, `rollout-2026-10-13T22-30-03-${SID}.jsonl`), body);
+  return dir;
+}
+
+test('a background process that exits hours after its turn does not bring the session back', async () => {
+  // Field case, 2026-10-14: a dev server started in a chat's first turn the
+  // night before was killed in the afternoon. Its exit freshened the rollout,
+  // and tower_defense stood lit in Codex white while the last Codex work had
+  // been on another project.
+  const { sessions, events } = await collect(backgroundExitDir(Date.now(), 18 * 3_600_000, 'none'));
+  assert.deepEqual(sessions, [], 'a session that last worked eighteen hours ago is on stage');
+  assert.equal(events.some((e) => e.t === 'tool.start' && e.id === 'cx:exec-dev'), false,
+    'the exit lit a window as if a command had just run');
+});
+
+test('an interrupted turn is over: the session is idle, not working', async () => {
+  const { sessions } = await collect(backgroundExitDir(Date.now(), 18 * 3_600_000, 'aborted'));
+  assert.equal(sessions.length, 1, 'the interrupt is the user at work: the session is there');
+  assert.equal(sessions[0]!.status, 'idle', 'turn_aborted left the turn open');
+});
+
 test('the Codex context comes from token_count, as a share of the request', () => {
   // Same record as the quotas, different recipients: the context belongs to
   // the session, the quota to the account. Returning only one lost the other.

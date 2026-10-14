@@ -43,10 +43,14 @@ export type RolloutEvent =
   | { kind: 'ask_started'; callId: string; atMs: number }
   | { kind: 'ask_answered'; callId: string; atMs: number }
   | { kind: 'turn_completed'; turnId: string; atMs: number; durationMs: number }
+  /** Interrupted by the user: the turn is over, with no work to report. */
+  | { kind: 'turn_aborted'; turnId: string; atMs: number }
   | {
       kind: 'item'; itemType: string; itemId: string; atMs: number;
       /** When it started. Codex writes it on EVERY item, not only on tools. */
       startedAtMs: number | null;
+      /** The turn the item belongs to, which may have ended long before it. */
+      turnId: string | null;
       item: Record<string, unknown>;
     }
   | { kind: 'tokens'; total: number; atMs: number; delta: TokenTotals }
@@ -334,6 +338,11 @@ export function parseRolloutLine(line: string): RolloutEvent | null {
     const duration = typeof payload['duration_ms'] === 'number' ? payload['duration_ms'] : 0;
     return { kind: 'turn_completed', turnId: str(payload['turn_id']) ?? '', atMs, durationMs: duration };
   }
+  // Esc in Codex writes this instead of `task_complete`: unread, the turn
+  // stayed open and the session read as working until it left the stage.
+  if (kind === 'turn_aborted') {
+    return { kind: 'turn_aborted', turnId: str(payload['turn_id']) ?? '', atMs };
+  }
   // Quota usage travels together with the token count, not in a record of
   // its own: it is the only place on disk where Codex writes it.
   if (kind === 'token_count') {
@@ -370,7 +379,7 @@ export function parseRolloutLine(line: string): RolloutEvent | null {
     if (!item || !itemType || !itemId) return null;
     const completed = typeof payload['completed_at_ms'] === 'number' ? payload['completed_at_ms'] : atMs;
     const started = typeof payload['started_at_ms'] === 'number' ? payload['started_at_ms'] : null;
-    return { kind: 'item', itemType, itemId, atMs: completed, startedAtMs: started, item };
+    return { kind: 'item', itemType, itemId, atMs: completed, startedAtMs: started, turnId: str(payload['turn_id']), item };
   }
   return null;
 }

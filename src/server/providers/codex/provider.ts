@@ -20,7 +20,16 @@ const POLL_MS = 900;
  * paid rarely instead of on every tick.
  */
 const PID_REFRESH_MS = 30_000;
-/** A rollout left untouched this long is no longer a live session. */
+/**
+ * A session with no activity for this long is no longer live.
+ *
+ * The rollout's mtime only says which rollouts are worth opening; whether the
+ * session stays on stage is decided on its events. A rollout is also written
+ * to by what is not the agent's work: measured on 2026-10-14, a dev server
+ * started in a chat's first turn was killed eighteen hours later, its exit
+ * landed in the rollout, and a chat that had last worked in the morning lit
+ * its tower in Codex white for half an hour in the afternoon.
+ */
 const LIVE_WINDOW_MS = 30 * 60_000;
 /** How far back the quota is looked for at start: the longest window Codex names is seven days. */
 const SEED_WINDOW_MS = 7 * 86_400_000;
@@ -73,6 +82,14 @@ interface Attached {
   tailer: Tailer;
   /** Open turn: `task_started` without its `task_complete`. */
   openTurn: string | null;
+  /**
+   * Turns that have ended. An item that still names one is a process the
+   * turn left running in the background (a dev server, a watcher) that has
+   * just exited: not work, and not a sign of life. 21 of 10 333 items in the
+   * rollouts of this machine on 2026-10-14, every one of them
+   * `unified_exec_startup`.
+   */
+  closedTurns: Set<string>;
   /** Questions to the user still unanswered: if there are any, it is waiting for you. */
   openAsks: Set<string>;
   lastActivityMs: number;
@@ -244,6 +261,7 @@ export class CodexProvider implements Provider {
       // referenced inside the Tailer's callback.
       tailer: null as unknown as Tailer,
       openTurn: null,
+      closedTurns: new Set(),
       openAsks: new Set(),
       // Zero and not the mtime: activity is told by the rollout's EVENTS. The
       // mtime also changes for writes that are not the agent's work, and
@@ -331,8 +349,15 @@ export class CodexProvider implements Provider {
         a.statusSince = ev.atMs;
         a.lastActivityMs = Math.max(a.lastActivityMs, ev.atMs);
         return;
+      case 'turn_aborted':
+        if (a.openTurn === ev.turnId) a.openTurn = null;
+        a.closedTurns.add(ev.turnId);
+        a.statusSince = ev.atMs;
+        a.lastActivityMs = Math.max(a.lastActivityMs, ev.atMs);
+        return;
       case 'turn_completed': {
         if (a.openTurn === ev.turnId) a.openTurn = null;
+        a.closedTurns.add(ev.turnId);
         a.statusSince = ev.atMs;
         a.lastActivityMs = Math.max(a.lastActivityMs, ev.atMs);
         // Codex declares the duration in the payload, and it is the same one
@@ -352,6 +377,7 @@ export class CodexProvider implements Provider {
         return;
       }
       case 'item': {
+        if (ev.turnId !== null && a.closedTurns.has(ev.turnId)) return;
         a.lastActivityMs = Math.max(a.lastActivityMs, ev.atMs);
         if (ev.itemType === 'UserMessage') a.currentTask = firstLineOf(ev.item);
         if (ev.itemType === 'Reasoning' && ev.startedAtMs !== null) {
@@ -370,6 +396,9 @@ export class CodexProvider implements Provider {
   #sessions(now: number): LiveSession[] {
     const out: LiveSession[] = [];
     for (const a of this.#attached.values()) {
+      // Still attached, so a late write is not paid as a full re-read on
+      // every tick; off stage until it works again.
+      if (now - a.lastActivityMs >= LIVE_WINDOW_MS) continue;
       // Three distinct states, all derivable from the rollout:
       //  - waiting: a question to the user is still unanswered
       //  - busy:    turn open, `task_started` without `task_complete`
