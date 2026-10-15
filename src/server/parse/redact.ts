@@ -268,8 +268,12 @@ export function project(rec: Record_, ctx: RedactContext, opts: RedactOptions): 
 
     case 'agent_done':
       // The end of a background subagent. The id is that of the call that had
-      // started it: whoever keeps the model already knows who it is.
-      out.push({ t: 'agent.remove', id: rec.toolUseId, at: rec.timestamp, reason: 'stop' });
+      // started it: whoever keeps the model already knows who it is. The task
+      // id goes too, as a second close: a later notification of the same
+      // agent names only that, or a call that did not start it (a message
+      // that resumed it). One that matches nothing ends nothing.
+      if (rec.toolUseId !== null) out.push({ t: 'agent.remove', id: rec.toolUseId, at: rec.timestamp, reason: 'stop' });
+      if (rec.taskId !== null) out.push({ t: 'agent.remove', id: rec.taskId, at: rec.timestamp, reason: 'stop' });
       return out;
 
     case 'turn_end':

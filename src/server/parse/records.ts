@@ -53,7 +53,12 @@ export interface AgentDoneRecord {
   sessionId: string;
   timestamp: number;
   /** The `Task` call that had started it: it is its identifier. */
-  toolUseId: string;
+  toolUseId: string | null;
+  /**
+   * The task's id, which for a subagent is the `agentId` its launch
+   * returned. A subagent that notifies a second time carries only this one.
+   */
+  taskId: string | null;
 }
 
 export interface TurnEndRecord {
@@ -160,6 +165,34 @@ export interface ParseStats {
 
 /** The call's id inside the delivery notification. Nothing else is read from it. */
 const RE_TASK_TOOL_USE = /<tool-use-id>(toolu_[A-Za-z0-9_-]{4,64})<\/tool-use-id>/;
+/**
+ * The task's id, in the shape of a launch's `agentId` (`spawnedAgentId` in
+ * `redact.ts`). Measured on tower_defense on 2026-10-15 (2.1.300): only the
+ * first notification of a subagent names the call, the later ones of the
+ * same agent only the task.
+ */
+const RE_TASK_ID = /<task-id>([0-9a-f]{8,40})<\/task-id>/i;
+/**
+ * A subagent that stopped with background work of its own still running: a
+ * `completed` notification that is not its end. The outcome closes the
+ * summary, `Agent "<description>" <outcome>`, as the Agent tool's own
+ * description lists them; the same task notifies again when it resumes.
+ * Read as an end, it closed a subagent still waiting on an hour of tests,
+ * and the tower showed "done" (2026-10-15).
+ */
+const RE_STILL_WAITING = /<summary>[^<]*" is waiting on its own background work<\/summary>/;
+
+/**
+ * A task notification, reduced to the ids of what it ended. `null` for one
+ * that ends nothing: a subagent that is only waiting, or no id at all.
+ */
+function deliveryOf(text: string, sessionId: string, timestamp: number): AgentDoneRecord | null {
+  if (RE_STILL_WAITING.test(text)) return null;
+  const toolUseId = RE_TASK_TOOL_USE.exec(text)?.[1] ?? null;
+  const taskId = RE_TASK_ID.exec(text)?.[1] ?? null;
+  if (toolUseId === null && taskId === null) return null;
+  return { kind: 'agent_done', sessionId, timestamp, toolUseId, taskId };
+}
 
 export function createStats(): ParseStats {
   return { badLines: 0, unknownTypes: {}, redactionClamps: 0, inheritedLines: 0 };
@@ -305,8 +338,7 @@ export function parseLine(line: string, stats: ParseStats): Record_ | null {
     case 'queue-operation': {
       if (!sessionId || raw['operation'] !== 'enqueue') return null;
       const content = raw['content'];
-      const id = typeof content === 'string' ? RE_TASK_TOOL_USE.exec(content)?.[1] : undefined;
-      return id ? { kind: 'agent_done', sessionId, timestamp: timeOf(raw), toolUseId: id } : null;
+      return typeof content === 'string' ? deliveryOf(content, sessionId, timeOf(raw)) : null;
     }
 
     case 'user': {
@@ -321,11 +353,11 @@ export function parseLine(line: string, stats: ParseStats): Record_ | null {
       // the turn had closed minutes earlier while three agents were still at
       // work, and their conclusion arrived only here. From the content --
       // which is the agent's report, that is, text -- we take ONLY the id of
-      // the call that had started it.
+      // the call that had started it, and of the task. One that ends nothing
+      // is not a prompt either: nobody typed it, and as one it landed the
+      // prompt's lander on the deck.
       if (obj(raw['origin'])?.['kind'] === 'task-notification') {
-        const text = typeof content === 'string' ? content : '';
-        const id = RE_TASK_TOOL_USE.exec(text)?.[1];
-        if (id) return { kind: 'agent_done', sessionId, timestamp: timeOf(raw), toolUseId: id };
+        return deliveryOf(typeof content === 'string' ? content : '', sessionId, timeOf(raw));
       }
 
       // A tool_result arrives as an array with a tool_result block.

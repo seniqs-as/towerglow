@@ -73,7 +73,8 @@ export interface SeededRecap {
 }
 
 /**
- * Beyond this age a subagent is considered finished regardless.
+ * Beyond this age a subagent is considered finished, once its session's tool
+ * no longer says that something of it runs.
  *
  * It is not a deadline invented on top of good data, it is a safety net: the
  * warm-up reads the tail of the transcript, and it can happen to find an
@@ -119,8 +120,9 @@ export class World {
   #agents = new Map<string, AgentInfo>();
   /**
    * Shells Claude sent to the background, by call id, with their session.
-   * They are what makes a registry `shell` work: a shell typed with `!` is
-   * not here, and leaves its session idle.
+   * They are what makes a registry `shell` work, with the subagents still
+   * open (`#statusOf`): a shell typed with `!` is not here, and leaves its
+   * session idle.
    */
   #shells = new Map<string, string>();
   /** Sessions whose registry says the turn is over and a shell still runs. */
@@ -303,9 +305,12 @@ export class World {
     const out: DeltaEvent[] = [];
     const now = Date.now();
     const seen = new Set<string>();
+    /** Sessions whose tool says something of theirs still runs: see the age net below. */
+    const running = new Set<string>();
 
     for (const s of live) {
       seen.add(s.sessionId);
+      if (s.status !== 'idle' || s.backgroundShell) running.add(s.sessionId);
       // A live session is in itself very recent activity: the building
       // slides toward the center of the row even if the transcript has not
       // been touched yet.
@@ -402,9 +407,15 @@ export class World {
     }
 
     // Agents too old to still be at work: they are closed here, where time
-    // passes anyway, instead of adding a timer just for them.
+    // passes anyway, instead of adding a timer just for them. Not one launched
+    // in the background while its session's tool says something still runs:
+    // Claude Code's registry says `busy` while such a subagent runs and
+    // `shell` while one waits on its own shell, and a real one ran 31 minutes
+    // and then waited an hour on its tests (2026-10-15). Closed at 30, it
+    // took the tower's lightning along. A synchronous one ends with its call.
     for (const [id, agent] of [...this.#agents]) {
       if (now - agent.startedAt < MAX_AGENT_AGE_MS) continue;
+      if (agent.agentId !== null && running.has(agent.sessionId)) continue;
       const owner = this.#sessions.get(agent.sessionId);
       if (owner && owner.provider !== provider) continue;
       out.push(...this.endAgent(id, now));
@@ -563,10 +574,14 @@ export class World {
     return pct ?? null;
   }
 
-  /** Closes an agent by call id. Used by whoever watches for its end. */
-  endAgent(id: string, at: number): DeltaEvent[] {
-    const agent = this.#agents.get(id);
-    if (!agent) return [];
+  /**
+   * Closes an agent by call id, or by the `agentId` its launch returned,
+   * which is the id of its task. Used by whoever watches for its end.
+   */
+  endAgent(ref: string, at: number): DeltaEvent[] {
+    const id = this.#agents.has(ref) ? ref : this.#agentByTask(ref);
+    const agent = id === undefined ? undefined : this.#agents.get(id);
+    if (id === undefined || !agent) return [];
     this.#agents.delete(id);
     this.#releaseDesk(agent.projectId, agent.deskIndex);
     const session = this.#sessions.get(agent.sessionId);
@@ -576,7 +591,16 @@ export class World {
         agentsActive: Math.max(0, session.agentsActive - 1),
       });
     }
-    return this.#record([{ t: 'agent.remove', id, at, reason: 'stop' }]);
+    return [
+      ...this.#record([{ t: 'agent.remove', id, at, reason: 'stop' }]),
+      // It may have been the one keeping a registry `shell` working.
+      ...this.#restatus(agent.sessionId, at),
+    ];
+  }
+
+  #agentByTask(taskId: string): string | undefined {
+    for (const [id, agent] of this.#agents) if (agent.agentId === taskId) return id;
+    return undefined;
   }
 
   /**
@@ -632,10 +656,10 @@ export class World {
       // "waiting for 3 background agents". What closes it is its transcript,
       // when it stops growing -- here we only record where to look for it.
       if (ev.asyncLaunch) {
-        if (ev.spawnedAgentId) {
-          this.#agents.set(agent.id, { ...agent, agentId: ev.spawnedAgentId });
-        }
-        return [];
+        if (!ev.spawnedAgentId) return [];
+        this.#agents.set(agent.id, { ...agent, agentId: ev.spawnedAgentId });
+        // At startup the registry's `shell` can be read before the launch.
+        return this.#restatus(agent.sessionId, ev.at);
       }
       return this.endAgent(agent.id, ev.at);
     }
@@ -686,10 +710,21 @@ export class World {
    * A registry `shell` is work only while a shell Claude started is open.
    * Without one it is the user's `!` -- an `npm run dev` that never ends --
    * and the turn that mattered is over.
+   *
+   * A subagent launched in the background and still open is one: the
+   * registry says `busy` while one runs, so under a `shell` it is waiting on
+   * a shell of its own, which this model never sees because it is in the
+   * subagent's transcript. Claude Code calls it "waiting on its own
+   * background work" and has not delivered yet. Measured on tower_defense on
+   * 2026-10-15: a subagent waiting an hour on the full test suite, and the
+   * tower showed "done".
    */
   #statusOf(sessionId: string, reported: SessionStatus): SessionStatus {
     if (!this.#shellReported.has(sessionId)) return reported;
     for (const owner of this.#shells.values()) if (owner === sessionId) return 'busy';
+    for (const agent of this.#agents.values()) {
+      if (agent.sessionId === sessionId && agent.agentId !== null) return 'busy';
+    }
     return reported;
   }
 
