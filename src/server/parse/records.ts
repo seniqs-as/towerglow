@@ -380,6 +380,16 @@ export function parseLine(line: string, stats: ParseStats): Record_ | null {
         return null;
       }
 
+      // Claude Code also writes as `user` what nobody typed: a subagent's
+      // report handed back (`origin.kind: "peer"`, measured on 2026-10-15),
+      // and the `isMeta` notes it adds around a turn -- a command's caveat, an
+      // image's size, a usage limit. As prompts they turned the astronaut
+      // back toward the ship and landed the lander for a message you never
+      // sent. A record without an origin stays a prompt: older versions and
+      // `claude -p` write none.
+      const origin = str(obj(raw['origin'])?.['kind']);
+      if (raw['isMeta'] === true || (origin !== null && origin !== 'human')) return null;
+
       // Otherwise it is a human prompt. Only the LENGTH is kept, never the text.
       if (typeof content === 'string') {
         const promptId = str(raw['promptId']) ?? str(raw['uuid']) ?? 'p';
