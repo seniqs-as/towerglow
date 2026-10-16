@@ -294,6 +294,17 @@ export function project(rec: Record_, ctx: RedactContext, opts: RedactOptions): 
       out.push({ t: 'session.update', id: rec.sessionId, patch: { compactedAt: rec.timestamp }, at: rec.timestamp });
       return out;
 
+    // Two numbers: when it stopped and when the limit resets. The refusal's
+    // text ("You've hit your session limit · resets 11:40am") stays behind.
+    case 'limit':
+      out.push({
+        t: 'session.update',
+        id: rec.sessionId,
+        patch: { limitStoppedAt: rec.timestamp, limitResetsAt: rec.resetsAt },
+        at: rec.timestamp,
+      });
+      return out;
+
     case 'cost_state':
       // All scalars declared by the tool: no string except the model's name,
       // which is an identifier like `model` in `usage`.

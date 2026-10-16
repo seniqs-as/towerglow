@@ -46,7 +46,7 @@ import type { LabelItem } from './ui/labels.ts';
 import { Badges, FOCUS_TITLE, FOLLOW_TITLE, SHELL_TITLE } from './ui/badges.ts';
 import type { BadgeItem, BadgeState } from './ui/badges.ts';
 import { SessionCard } from './ui/sessionCard.ts';
-import { describeActivity, formatElapsed } from './ui/format.ts';
+import { describeActivity, formatElapsed, limitStopText } from './ui/format.ts';
 import {
   HQ_PLAZA_RADIUS, HQ_HEIGHT, HEX_SIZE, hqPlacement, placeSlot, LAMP_SEATS,
 } from '../shared/layout.ts';
@@ -1503,7 +1503,7 @@ function refreshBadges(): void {
       state: badgeStateOf(crewStatus(session, notices.of(session.id, now), now)),
       inferred: session.statusConfidence === 'inferred',
       shift: shifts.get(session.id) ?? 0,
-      hover: hoverText(session, elapsed),
+      hover: hoverText(session, elapsed, now),
       // Without a PID there is no terminal to find, but the project is still
       // there: the click opens a shell in it. With neither, the details.
       canFocus: canJump(session),
@@ -1522,12 +1522,16 @@ function refreshBadges(): void {
 }
 
 /**
- * The glyph for what the astronaut is doing. Blocked wears the alert like
- * waiting does: both want you, and the hover says which.
+ * The glyph for what the astronaut is doing. Blocked wears the red cross: it
+ * stopped and will not go on by itself. Today that is a session stopped at
+ * the usage limit (the error notice that would also make one is latent), and
+ * the hover says so; it used to wear the alert of waiting, which asks you a
+ * question rather than to restart it.
  */
 function badgeStateOf(status: CrewStatus): BadgeState {
   if (status === 'working') return 'busy';
-  if (status === 'waiting' || status === 'blocked') return 'waiting';
+  if (status === 'blocked') return 'stopped';
+  if (status === 'waiting') return 'waiting';
   // idle: the turn is over. It is the same signal that used to switch off the
   // facade's windows, made explicit here with the check mark.
   return 'done';
@@ -1542,11 +1546,16 @@ function badgeStateOf(status: CrewStatus): BadgeState {
  * in use does. The commit does not show here: it belongs to the project and
  * sits on its nameplate.
  */
-function hoverText(session: SessionInfo, elapsed: string): string {
+function hoverText(session: SessionInfo, elapsed: string, now: number): string {
   const what = whatOf(session);
   // The arc around the circle shows the context at a glance; here is the
   // number, for whoever wants to know how long before the session compacts.
   const ctx = session.contextPct !== null ? `\ncontext ${Math.round(session.contextPct)}%` : '';
+
+  // Before its status: a session refused at the limit can still read busy
+  // for a shell it left running, and its turn will not go on.
+  const stop = limitStopText(session, now);
+  if (stop) return `Stopped at the usage limit · ${stop.since}\n${what}\n${stop.next}` + ctx;
 
   if (session.status === 'waiting') {
     const why = session.waitingFor ?? what;
@@ -1648,9 +1657,10 @@ window.setInterval(() => {
 }, 60_000);
 
 // The stopwatch must keep running even when nothing arrives from the server.
+// A session stopped at the limit has one too, and the reset it counts down to.
 window.setInterval(() => {
   for (const s of store.sessions.values()) {
-    if (s.status === 'busy' || s.status === 'waiting') {
+    if (s.status === 'busy' || s.status === 'waiting' || (s.limitStoppedAt ?? null) !== null) {
       refreshLabels();
       return;
     }

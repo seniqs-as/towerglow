@@ -2,7 +2,7 @@ import type { ProjectInfo, SessionInfo } from '../../shared/protocol.ts';
 import type { Step } from '../state/trail.ts';
 import { PENDING_MAX_MS } from '../state/pendingFocus.ts';
 import { TOOL_COLOR } from '../world/palette.ts';
-import { describeActivity, describeStep, formatElapsed } from './format.ts';
+import { describeActivity, describeStep, formatElapsed, limitStopText } from './format.ts';
 
 export interface CardContext {
   project: ProjectInfo | undefined;
@@ -104,14 +104,19 @@ export class SessionCard {
     this.#root.dataset['provider'] = session.provider;
 
     const what = ctx.what;
-    const rows: [string, string][] = [['status', statusText(session)]];
+    const stop = limitStopText(session, Date.now());
+    const rows: [string, string][] = [['status', stop ? 'stopped at the usage limit' : statusText(session)]];
 
     // The two times are different things and must be stated separately: how
     // long the work lasted, and how long it has been in this state. Merging
     // them into a single row made twenty-five minutes of waiting read as
     // twenty-five minutes of running.
     const doing = describeActivity(session);
-    if (session.status === 'busy') {
+    // First: a session refused at the limit can read busy for a shell it
+    // left running, and nothing of its turn is running.
+    if (stop) {
+      rows.push(['stopped for', stop.since]);
+    } else if (session.status === 'busy') {
       if (doing) rows.push(['doing', doing]);
       rows.push(['running for', formatElapsed(ctx.sinceMs)]);
     } else if (session.status === 'waiting') {
@@ -182,6 +187,7 @@ export class SessionCard {
       body.appendChild(recapBlock(session.recap, session.recapAt, session.recapInherited));
     }
     if (session.waitingFor) body.appendChild(el('p', 'card__wait', session.waitingFor));
+    if (stop) body.appendChild(el('p', 'card__wait', stop.next));
 
     const dl = el('dl', 'card__rows');
     for (const [k, v] of rows) {

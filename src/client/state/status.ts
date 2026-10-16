@@ -8,15 +8,17 @@ import type { NoticeCode, SessionInfo } from '../../shared/protocol.ts';
  * The scene, the badge and the session card all read this function: if two
  * places could disagree they eventually would.
  *
- *   blocked   -> an error notice is held: the session fell over, it is not busy
+ *   blocked   -> it stopped at the usage limit and waits to be restarted, or
+ *                an error notice is held: the session fell over, it is not busy
  *   working   -> a turn is running: hammering at its structure
  *   waiting   -> it wants a reply from you: stopped, waving
  *   sleeping  -> quiet for a long while: sat down
  *   idle      -> anything else: pottering about its zone
  *
  * Errored outranks working because a session that fell over is stuck, not
- * busy. Waiting sits below working because a running turn is not waiting on
- * anyone yet.
+ * busy: a background shell left running by a session refused at the limit
+ * keeps its registry `busy`, and nothing more of its turn will come. Waiting
+ * sits below working because a running turn is not waiting on anyone yet.
  */
 export type CrewStatus = 'blocked' | 'working' | 'waiting' | 'sleeping' | 'idle';
 
@@ -24,7 +26,7 @@ export type CrewStatus = 'blocked' | 'working' | 'waiting' | 'sleeping' | 'idle'
 export const SLEEP_AFTER_MS = 20 * 60_000;
 
 /** The fields the precedence reads; a test needs no more than these. */
-export type CrewSession = Pick<SessionInfo, 'status' | 'statusSince' | 'lastActivityAt'>;
+export type CrewSession = Pick<SessionInfo, 'status' | 'statusSince' | 'lastActivityAt' | 'limitStoppedAt'>;
 
 /**
  * A subagent's astronaut is always working.
@@ -51,7 +53,8 @@ export function helperStatus(): CrewStatus {
 }
 
 export function crewStatus(session: CrewSession, notice: NoticeCode | null, now: number): CrewStatus {
-  if (notice === 'error') return 'blocked';
+  // `??`: a server older than the field sends none, and undefined is no stop.
+  if (notice === 'error' || (session.limitStoppedAt ?? null) !== null) return 'blocked';
   if (session.status === 'busy') return 'working';
   if (session.status === 'waiting') return 'waiting';
   // Quiet since whichever came last: the status change or the last event.

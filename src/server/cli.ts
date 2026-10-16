@@ -654,6 +654,8 @@ async function start(cfg: Config): Promise<number> {
         // is right also for whoever opens the page with work already under way.
         world.noteSessionEvent(ev);
         passthrough.push(ev);
+        // A session stopped at the usage limit that goes on says so.
+        passthrough.push(...world.resumeAfterLimit(ev));
         // A subagent spawn is not just a tool call: it is one more inhabitant
         // in the building, and it goes into the model as such.
         const born = world.trackAgent(ev);

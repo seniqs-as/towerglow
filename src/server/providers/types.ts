@@ -32,6 +32,14 @@ export interface LiveSession {
   /** The last compaction read, when the provider reads it itself (Codex). */
   compactedAt?: number | null;
   /**
+   * Stopped at a usage limit, when the provider reads it itself (Codex), and
+   * when that limit resets. Left out (`undefined`) by a provider that does not
+   * know: Claude Code's comes from the transcript, and a registry pass must
+   * not erase it.
+   */
+  limitStoppedAt?: number | null;
+  limitResetsAt?: number | null;
+  /**
    * The turn is over but a shell runs in the background. Whether that is
    * work depends on who started it, which only the transcript says: the
    * world model decides, and `status` carries what holds without it.

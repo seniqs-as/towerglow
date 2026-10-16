@@ -73,11 +73,11 @@ test('both legends name every tool category, in the colour their own view draws 
   }
 });
 
-test('both legends explain the three session symbols and the context arc', () => {
+test('both legends explain the four session symbols and the context arc', () => {
   for (const view of ['city', 'colony'] as const) {
     const rows = legendFor(view).flatMap((s) => s.rows);
     const states = rows.filter((r) => r.kind === 'symbol').map((r) => r.state);
-    assert.deepEqual(states, ['busy', 'done', 'wait'], `${view}: the badge is the same in both views`);
+    assert.deepEqual(states, ['busy', 'done', 'wait', 'stop'], `${view}: the badge is the same in both views`);
     assert.equal(rows.filter((r) => r.kind === 'context').length, 1, `${view}: the context arc`);
   }
 });

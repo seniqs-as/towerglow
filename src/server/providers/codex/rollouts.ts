@@ -48,7 +48,11 @@ export type RolloutEvent =
   | { kind: 'turn_started'; turnId: string; atMs: number }
   | { kind: 'ask_started'; callId: string; atMs: number }
   | { kind: 'ask_answered'; callId: string; atMs: number }
-  | { kind: 'turn_completed'; turnId: string; atMs: number; durationMs: number }
+  | {
+      kind: 'turn_completed'; turnId: string; atMs: number; durationMs: number;
+      /** The turn ended refused at the usage limit (`usage_limit_exceeded`). */
+      limited: boolean;
+    }
   /** Interrupted by the user: the turn is over, with no work to report. */
   | { kind: 'turn_aborted'; turnId: string; atMs: number }
   | {
@@ -68,6 +72,50 @@ export type RolloutEvent =
       /** Context window in use, 0-100: it travels in the same record. */
       contextPct: number | null;
     };
+
+/**
+ * The code of a turn refused at the account's usage limit. Measured: 17
+ * `task_complete` records on this machine from 2026-09-17 to 2026-10-05 (9 in
+ * chats, 8 in subagents' rollouts), every one with this code as a string.
+ * Read as a key too, in case a version writes it as an object.
+ */
+const LIMIT_ERROR = 'usage_limit_exceeded';
+
+/** Stopped at the usage limit: when, and when the limit resets if it is known. */
+export interface LimitStop {
+  atMs: number;
+  resetsAt: number | null;
+}
+
+/**
+ * Whether a chat is stopped at its usage limit, folded from its rollout's
+ * events in order: one rule for the live provider and for the look at an
+ * older rollout when the server starts (`readLimitStop`).
+ *
+ * The refusal names no reset that is not text, so the reset is the one of
+ * the fullest window in the last reading before it: measured before each of
+ * the 17 stops, the fullest window was at 93-100%.
+ */
+export class LimitWatch {
+  stop: LimitStop | null = null;
+  #windows: readonly RateWindow[] = [];
+
+  see(ev: RolloutEvent): void {
+    // The credit balance comes with no window: it says nothing of the reset.
+    if (ev.kind === 'limits' && ev.windows.length > 0) this.#windows = ev.windows;
+    // A turn that starts is you restarting it, refused again or not.
+    else if (ev.kind === 'turn_started') this.stop = null;
+    else if (ev.kind === 'turn_completed') {
+      this.stop = ev.limited ? { atMs: ev.atMs, resetsAt: fullestReset(this.#windows) } : null;
+    }
+  }
+}
+
+function fullestReset(windows: readonly RateWindow[]): number | null {
+  let fullest: RateWindow | null = null;
+  for (const w of windows) if (!fullest || w.usedPercent > fullest.usedPercent) fullest = w;
+  return fullest?.resetsAt ?? null;
+}
 
 function obj(v: unknown): Record<string, unknown> | null {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -203,6 +251,47 @@ export function readLastLimits(
  * tails at most. What Codex last wrote is shown, never guessed -- and never
  * read from `auth.json`, which holds it and stays off the allow-list.
  */
+/**
+ * A rollout that ends stopped at the usage limit, from its last bytes.
+ *
+ * For a chat stopped before the server started, in a rollout older than the
+ * live window: discovery does not open those, and the chat would be off
+ * stage with nothing on its tower to say it has to be restarted. The tail
+ * is enough: the stop is the rollout's last turn, and the reading that names
+ * its reset sits a fraction of a second before it.
+ */
+export function readLimitStop(file: string, policy: PathPolicy, tailBytes = 256 * 1024): LimitStop | null {
+  try {
+    assertReadable(file, policy);
+  } catch {
+    return null;
+  }
+  let fd: number;
+  try {
+    fd = fs.openSync(file, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    const len = Math.min(st.size, tailBytes);
+    const buf = Buffer.allocUnsafe(len);
+    fs.readSync(fd, buf, 0, len, st.size - len);
+    // The first line of the tail is almost always truncated: it is dropped.
+    const lines = buf.toString('utf8').split('\n');
+    const watch = new LimitWatch();
+    for (const line of len < st.size ? lines.slice(1) : lines) {
+      const ev = parseRolloutLine(line);
+      if (ev) watch.see(ev);
+    }
+    return watch.stop;
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export function readLastPlan(files: readonly string[], policy: PathPolicy, maxFiles = 20): string | null {
   for (const file of files.slice(0, maxFiles)) {
     const plan = readLastLimits(file, policy)?.plan ?? null;
@@ -349,7 +438,11 @@ export function parseRolloutLine(line: string): RolloutEvent | null {
   }
   if (kind === 'task_complete') {
     const duration = typeof payload['duration_ms'] === 'number' ? payload['duration_ms'] : 0;
-    return { kind: 'turn_completed', turnId: str(payload['turn_id']) ?? '', atMs, durationMs: duration };
+    // Only the error's code: its message ("You've hit your usage limit ...
+    // try again at Oct 6th, 2026 12:44 AM") is text, and stays here.
+    const info = obj(payload['error'])?.['codex_error_info'];
+    const limited = info === LIMIT_ERROR || obj(info)?.[LIMIT_ERROR] !== undefined;
+    return { kind: 'turn_completed', turnId: str(payload['turn_id']) ?? '', atMs, durationMs: duration, limited };
   }
   // Esc in Codex writes this instead of `task_complete`: unread, the turn
   // stayed open and the session read as working until it left the stage.

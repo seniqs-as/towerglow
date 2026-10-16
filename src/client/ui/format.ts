@@ -17,6 +17,43 @@ export function formatElapsed(ms: number): string {
 }
 
 /**
+ * A session stopped at the usage limit, in words: for how long, and what it
+ * takes to start it again. One text for the badge's bubble and the card, so
+ * the two cannot tell it differently. `null` for a session that is not.
+ *
+ * It does not start again when the limit resets -- that is the whole point
+ * of saying it (the user's request, 2026-10-16) -- so even before the reset
+ * the text says what will be needed after it.
+ */
+export function limitStopText(
+  s: Pick<SessionInfo, 'limitStoppedAt' | 'limitResetsAt'>,
+  now: number,
+): { since: string; next: string } | null {
+  // `??`: a server older than the fields sends neither.
+  const at = s.limitStoppedAt ?? null;
+  if (at === null) return null;
+  const resets = s.limitResetsAt ?? null;
+  const since = formatElapsed(now - at);
+  if (resets === null) {
+    return { since, next: 'It will not start again by itself: send it a message once the limit resets' };
+  }
+  if (resets <= now) return { since, next: 'The limit has reset: send it a message to start it again' };
+  return {
+    since,
+    next: `The limit resets at ${clockOf(resets, now)}, in ${formatElapsed(resets - now)}. ` +
+      'It will not start again by itself: send it a message then',
+  };
+}
+
+/** A time of day; with the weekday when it is not within the next twenty hours. */
+function clockOf(at: number, now: number): string {
+  const far = at - now > 20 * 3_600_000;
+  return new Date(at).toLocaleString(undefined, far
+    ? { weekday: 'short', hour: '2-digit', minute: '2-digit' }
+    : { hour: '2-digit', minute: '2-digit' });
+}
+
+/**
  * From the tool's name to the verb. The two lists are the two providers: Claude
  * Code names tools, Codex names items, but what they describe is the same
  * handful of gestures.

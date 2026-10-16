@@ -361,6 +361,8 @@ export class World {
           contextLeft: null,
           contextPct: s.contextPct ?? this.#takeContext(s.sessionId),
           compactedAt: s.compactedAt ?? null,
+          limitStoppedAt: s.limitStoppedAt ?? null,
+          limitResetsAt: s.limitResetsAt ?? null,
           turns: 0,
           toolCalls: 0,
           lastTurnMs: null,
@@ -397,6 +399,14 @@ export class World {
       // transcript, and a registry pass knows nothing of it.
       const compacted = s.compactedAt ?? null;
       if (compacted !== null && compacted !== existing.compactedAt) patch.compactedAt = compacted;
+      // The same for a stop at the usage limit, except that a provider that
+      // reads it says both ways: Codex clears it when a turn starts.
+      if (s.limitStoppedAt !== undefined) {
+        const stopped = s.limitStoppedAt;
+        const resets = stopped === null ? null : s.limitResetsAt ?? null;
+        if (stopped !== existing.limitStoppedAt) patch.limitStoppedAt = stopped;
+        if (resets !== existing.limitResetsAt) patch.limitResetsAt = resets;
+      }
       const label = this.#opts.redactPaths ? redactName(s.label) : s.label;
       if (existing.label !== label) patch.label = label;
 
@@ -803,6 +813,28 @@ export class World {
       if (!s) return;
       this.#sessions.set(ev.sessionId, { ...s, contextLeft: ev.tokensLeft });
     }
+  }
+
+  /**
+   * A Claude Code session stopped at a usage limit goes on: you typed, or the
+   * API served it a reply, which a turn started by a background task's
+   * notification gets without a prompt. The refusal itself is written with no
+   * tokens. The session's own reply only: a subagent's is not the session
+   * going on.
+   *
+   * Codex says it on every pass of its provider (`LiveSession.limitStoppedAt`):
+   * clearing it here too would make two places decide it.
+   */
+  resumeAfterLimit(ev: DeltaEvent): DeltaEvent[] {
+    const served = ev.t === 'usage' && ev.agentId === null &&
+      ev.delta.in + ev.delta.out + ev.delta.cacheRead + ev.delta.cacheWrite > 0;
+    if (ev.t !== 'prompt' && !served) return [];
+    const id = ev.sessionId;
+    const s = this.#sessions.get(id);
+    if (!s || s.provider !== 'claude' || s.limitStoppedAt === null) return [];
+    const patch = { limitStoppedAt: null, limitResetsAt: null };
+    this.#sessions.set(id, { ...s, ...patch });
+    return this.#record([{ t: 'session.update', id, patch, at: ev.at }]);
   }
 
   /**

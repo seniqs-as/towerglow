@@ -6,7 +6,10 @@ import type { ParseStats } from '../../parse/records.ts';
 import { fileIdFor, projectIdFor, redactRelPath } from '../../state/ids.ts';
 import { Tailer } from '../../watch/tailer.ts';
 import { CodexStore } from './store.ts';
-import { discoverRollouts, newestRollout, parseRolloutLine, readLastLimits, readLastPlan, readLastWindows } from './rollouts.ts';
+import {
+  LimitWatch, discoverRollouts, newestRollout, parseRolloutLine, readLastLimits, readLastPlan, readLastWindows,
+  readLimitStop,
+} from './rollouts.ts';
 import type { RolloutMeta } from './rollouts.ts';
 import type { LiveSession, Provider, ProviderContext } from '../types.ts';
 import type { PathPolicy } from '../../paths.ts';
@@ -31,6 +34,15 @@ const PID_REFRESH_MS = 30_000;
  * its tower in Codex white for half an hour in the afternoon.
  */
 const LIVE_WINDOW_MS = 30 * 60_000;
+/**
+ * How long a chat stopped at the usage limit stays on stage with nothing
+ * written after the stop: a day. Codex keeps no registry of live chats, so
+ * past the live window nothing says whether the terminal is still open; but
+ * the stop is the one thing on that tower you have to act on, and a chat that
+ * left the stage after half an hour, at 1 a.m., said nothing about it in the
+ * morning. A 7d limit that resets later than this goes quiet first.
+ */
+const LIMIT_HOLD_MS = 24 * 3_600_000;
 /** How far back the quota is looked for at start: the longest window Codex names is seven days. */
 const SEED_WINDOW_MS = 7 * 86_400_000;
 /** After a turn closes, how long it stays "active" before it waits again. */
@@ -77,6 +89,11 @@ function firstLineOf(item: Record<string, unknown>): string | null {
   return line.length > 0 ? line.slice(0, 90) : null;
 }
 
+/** Stopped at the usage limit recently enough to stay on stage: see `LIMIT_HOLD_MS`. */
+function held(a: Attached, now: number): boolean {
+  return a.limit.stop !== null && now - a.limit.stop.atMs < LIMIT_HOLD_MS;
+}
+
 interface Attached {
   meta: RolloutMeta;
   tailer: Tailer;
@@ -120,6 +137,8 @@ interface Attached {
   contextPct: number | null;
   /** The last time Codex compacted the conversation. */
   compactedAt: number | null;
+  /** Stopped at the usage limit: its last turn was refused for the account's usage. */
+  limit: LimitWatch;
 }
 
 /**
@@ -148,6 +167,13 @@ export class CodexProvider implements Provider {
   #pids = new Map<string, { pid: number; lastTs: number }>();
   #pidsReadAt = 0;
   #limitsSeeded = false;
+  #heldSeeded = false;
+  /**
+   * Rollouts still being read by `#attach`. The read goes in chunks, and a
+   * tick in between would see a chat `#seedHeld` attached as neither alive
+   * nor held -- its first turn read, not yet its stop -- and close it.
+   */
+  #reading = new Set<string>();
 
   constructor(opts: CodexProviderOptions) {
     this.#opts = opts;
@@ -161,6 +187,7 @@ export class CodexProvider implements Provider {
   start(ctx: ProviderContext): void {
     this.#ctx = ctx;
     this.#seedLimits();
+    this.#seedHeld();
     this.#tick();
     this.#timer = setInterval(() => this.#tick(), POLL_MS);
     this.#timer.unref?.();
@@ -212,6 +239,24 @@ export class CodexProvider implements Provider {
     ]);
   }
 
+  /**
+   * The chats stopped at the usage limit before the server started, in
+   * rollouts older than the live window: discovery opens none of those, and
+   * the stop would be lost with every restart. Looked for once, by the tail
+   * of each rollout of the hold; from then on such a chat stays attached.
+   */
+  #seedHeld(): void {
+    if (this.#heldSeeded) return;
+    this.#heldSeeded = true;
+    const now = Date.now();
+    const older = discoverRollouts(this.#opts.codexDir, this.#opts.policy, now - LIMIT_HOLD_MS)
+      .filter((m) => !m.subagent && m.mtimeMs < now - LIVE_WINDOW_MS && this.#opts.produces(m.cwd));
+    for (const meta of older) {
+      const stop = readLimitStop(meta.file, this.#opts.policy);
+      if (stop && now - stop.atMs < LIMIT_HOLD_MS) void this.#attach(meta, now);
+    }
+  }
+
   #tick(): void {
     const ctx = this.#ctx;
     if (!ctx) return;
@@ -246,7 +291,7 @@ export class CodexProvider implements Provider {
 
     const alive = new Set(found.map((m) => m.sessionId));
     for (const [id, a] of this.#attached) {
-      if (alive.has(id)) continue;
+      if (alive.has(id) || held(a, now) || this.#reading.has(id)) continue;
       void a.tailer.close();
       this.#attached.delete(id);
     }
@@ -276,6 +321,7 @@ export class CodexProvider implements Provider {
       reasoningMs: 0,
       contextPct: null,
       compactedAt: null,
+      limit: new LimitWatch(),
     };
 
     // The whole rollout is read: it is a few hundred KB net of tool outputs,
@@ -287,11 +333,14 @@ export class CodexProvider implements Provider {
     );
     this.#attached.set(meta.sessionId, attached);
 
+    this.#reading.add(meta.sessionId);
     try {
       await attached.tailer.open();
     } catch {
       this.#attached.delete(meta.sessionId);
       return;
+    } finally {
+      this.#reading.delete(meta.sessionId);
     }
     // If the rollout contained not a single useful event, the mtime remains
     // the only available reference.
@@ -303,6 +352,7 @@ export class CodexProvider implements Provider {
   #onLine(a: Attached, line: string): void {
     const ev = parseRolloutLine(line);
     if (!ev) return;
+    a.limit.see(ev);
 
     switch (ev.kind) {
       case 'model':
@@ -403,8 +453,9 @@ export class CodexProvider implements Provider {
     const out: LiveSession[] = [];
     for (const a of this.#attached.values()) {
       // Still attached, so a late write is not paid as a full re-read on
-      // every tick; off stage until it works again.
-      if (now - a.lastActivityMs >= LIVE_WINDOW_MS) continue;
+      // every tick; off stage until it works again, unless it is stopped at
+      // the usage limit and waits for you.
+      if (now - a.lastActivityMs >= LIVE_WINDOW_MS && !held(a, now)) continue;
       // Three distinct states, all derivable from the rollout:
       //  - waiting: a question to the user is still unanswered
       //  - busy:    turn open, `task_started` without `task_complete`
@@ -436,6 +487,8 @@ export class CodexProvider implements Provider {
         reasoningMs: a.reasoningMs,
         contextPct: a.contextPct,
         compactedAt: a.compactedAt,
+        limitStoppedAt: a.limit.stop?.atMs ?? null,
+        limitResetsAt: a.limit.stop?.resetsAt ?? null,
       });
     }
     return out;

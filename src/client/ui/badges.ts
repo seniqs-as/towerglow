@@ -5,7 +5,7 @@ import { CLOSE_ICON, EDIT_ICON, FOLDER_ICON, INFO_ICON, ZOOM_ICON, ZOOM_OUT_ICON
 import { PENDING_MAX_MS } from '../state/pendingFocus.ts';
 
 /** A session's state, reduced to what has to be read at a glance. */
-export type BadgeState = 'busy' | 'done' | 'waiting';
+export type BadgeState = 'busy' | 'done' | 'waiting' | 'stopped';
 
 export interface BadgeItem {
   id: string;
@@ -472,7 +472,10 @@ const ICONS =
   '<svg class="badge__icon badge__alert" viewBox="0 0 16 16" aria-hidden="true">' +
   '<path d="M8 1.8 15.2 14.2H0.8z" fill="none" stroke="currentColor" stroke-width="1.7" ' +
   'stroke-linejoin="round"/><path d="M8 6.2v3.3" stroke="currentColor" stroke-width="1.7" ' +
-  'stroke-linecap="round"/><circle cx="8" cy="11.9" r="0.95" fill="currentColor"/></svg>';
+  'stroke-linecap="round"/><circle cx="8" cy="11.9" r="0.95" fill="currentColor"/></svg>' +
+  '<svg class="badge__icon badge__stop" viewBox="0 0 16 16" aria-hidden="true">' +
+  '<path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2.4" ' +
+  'stroke-linecap="round"/></svg>';
 
 
 

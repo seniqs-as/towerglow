@@ -33,7 +33,7 @@ import type { ToolCategory } from '../../shared/protocol.ts';
 export type LegendView = 'city' | 'colony';
 
 /** A session's state, as the symbol over its project shows it. */
-type SignState = 'busy' | 'done' | 'wait';
+type SignState = 'busy' | 'done' | 'wait' | 'stop';
 
 export type LegendRow =
   | { kind: 'note'; text: string }
@@ -283,7 +283,8 @@ function signs(where: string, wornBy: string): LegendSection {
   return section('Session', [
     symbol('busy', 'Working', 'a turn is running'),
     symbol('done', 'Done', 'the last turn finished'),
-    symbol('wait', 'Waiting for you', 'it asked a question and is stopped until you answer, or it fell over'),
+    symbol('wait', 'Waiting for you', 'it asked a question and is stopped until you answer'),
+    symbol('stop', 'Stopped at the limit', 'it ran out of usage and stopped. It does not start again by itself when the limit resets: send it a message. Hover it for when the limit resets'),
     note(`${where}, one per session, side by side. Its colour says the state; the circle around it says the tool, orange for Claude Code, white for Codex, ${wornBy}. A dashed circle means the state is inferred from files rather than reported by the tool. Hover it for the task, click it to jump to its terminal -- or, once the session is over, to open a new one in the project, ready for claude or codex. The i in the bubble opens the details.`),
     {
       kind: 'context',
@@ -386,4 +387,7 @@ const SIGN: Record<SignState, string> = {
     'stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 6.2v3.3" ' +
     'stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>' +
     '<circle cx="8" cy="11.9" r="0.95" fill="currentColor"/></svg>',
+  stop:
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" ' +
+    'stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
 };

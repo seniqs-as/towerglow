@@ -8,6 +8,7 @@
   --state-busy: #ffffff;
   --state-done: #4ee08a;
   --state-wait: #ffd84d;
+  --state-stop: #ff4d6a;
   --bg: #05070c;
   --edge: #39d0ff;
   --text: #cfe8ff;
@@ -343,6 +344,7 @@ body.is-inside .empty { display: none; }
 .badge__bolt { color: var(--state-busy); }
 .badge__check { color: var(--state-done); }
 .badge__alert { color: var(--state-wait); }
+.badge__stop { color: var(--state-stop); }
 
 /* State inferred rather than declared: the border says so, as on the labels. */
 .badge[data-inferred="yes"] { border-style: dashed; }
@@ -374,11 +376,13 @@ body.is-inside .empty { display: none; }
 .badge__icon { display: none; }
 .badge[data-state="busy"] .badge__bolt,
 .badge[data-state="done"] .badge__check,
-.badge[data-state="waiting"] .badge__alert { display: block; }
+.badge[data-state="waiting"] .badge__alert,
+.badge[data-state="stopped"] .badge__stop { display: block; }
 
 .badge__bolt { width: 12px; height: 18px; }
 .badge__check { width: 18px; height: 18px; }
 .badge__alert { width: 19px; height: 19px; }
+.badge__stop { width: 17px; height: 17px; }
 
 /* Working: the lightning bolt pulses at the same rhythm as before. */
 .badge[data-state="busy"] .badge__bolt {
@@ -395,6 +399,14 @@ body.is-inside .empty { display: none; }
 @keyframes badge-wait {
   0%, 100% { box-shadow: 0 0 0 0 rgba(255, 216, 77, 0.55); }
   60% { box-shadow: 0 0 0 8px rgba(255, 216, 77, 0); }
+}
+
+/* Stopped at the usage limit: the red cross, on a red glow that stays put.
+   It can last a night, and a halo that pulsed for hours would wear out the
+   one that means a question is waiting. The circle keeps the tool's colour,
+   and a jump to the terminal still flashes its outcome on it. */
+.badge[data-state="stopped"]:not([data-focus]) {
+  box-shadow: 0 0 9px 2px rgba(255, 77, 106, 0.45);
 }
 
 /* Finished: the check mark stays, but without asking for attention. */
@@ -1387,6 +1399,7 @@ body.is-inside .empty { display: none; }
 .legend__symbol--busy { color: var(--state-busy); }
 .legend__symbol--done { color: var(--state-done); }
 .legend__symbol--wait { color: var(--state-wait); }
+.legend__symbol--stop { color: var(--state-stop); }
 
 /* The context arc in the legend: fixed at three quarters, to show how it
    looks when it starts to get tight. */

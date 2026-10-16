@@ -48,6 +48,9 @@
 //     towers. An old client ignores it and keeps drawing what it is sent live.
 // v9 (additions, same version): `session.compactedAt`. An old client ignores
 //     it and shows no caption.
+// v9 (additions, same version): `session.limitStoppedAt` and
+//     `session.limitResetsAt`. An old client ignores them and shows the
+//     stopped session as done.
 export const PROTOCOL_VERSION = 9;
 
 /** Beyond this length, a string in a DeltaEvent is a redaction bug. */
@@ -204,6 +207,22 @@ export interface SessionInfo {
    * record. `null` when no compaction has been read in what the server read.
    */
   compactedAt: number | null;
+  /**
+   * When the session stopped at a usage limit, if it is stopped there now:
+   * the API refused its turn for the account's usage, and nothing starts it
+   * again when the limit resets -- an interactive session waits for you to
+   * type (the user's request, 2026-10-16: show it on the project, so you know
+   * it has to be restarted). Claude Code's refusal (`error: "rate_limit"`),
+   * Codex's `task_complete` with `usage_limit_exceeded`. Back to `null` when
+   * it goes on: a prompt, a reply the API served, a Codex turn that starts.
+   */
+  limitStoppedAt: number | null;
+  /**
+   * When that limit resets, if it is known: Claude Code writes it on the
+   * refusal since 2.1.29x, for Codex it is the reset of its fullest window
+   * at the stop. Past it the session can go on, but only once you restart it.
+   */
+  limitResetsAt: number | null;
   turns: number;
   toolCalls: number;
   /**

@@ -76,6 +76,20 @@ export interface ContextRecord {
   tokensLeft: number;
 }
 
+/**
+ * The session stopped at a usage limit: the API refused the turn, and Claude
+ * Code wrote the refusal as the session's reply (`isApiErrorMessage`, with
+ * `error: "rate_limit"` -- "You've hit your session limit · resets 11:40am").
+ * Nothing starts it again when the limit resets: it waits for you.
+ */
+export interface LimitRecord {
+  kind: 'limit';
+  sessionId: string;
+  timestamp: number;
+  /** When the limit resets, in ms, as the record declares it; `null` when it does not. */
+  resetsAt: number | null;
+}
+
 /** Claude Code compacted the conversation: `compact_boundary`. Only its time. */
 export interface CompactRecord {
   kind: 'compact';
@@ -134,7 +148,7 @@ export interface CostStateRecord {
 export type Record_ =
   | AssistantRecord | ToolResultRecord | PromptRecord
   | TurnEndRecord | AgentDoneRecord | ContextRecord | CompactRecord | TitleRecord | RecapRecord
-  | CostStateRecord;
+  | CostStateRecord | LimitRecord;
 
 export interface ParseStats {
   badLines: number;
@@ -192,6 +206,29 @@ function deliveryOf(text: string, sessionId: string, timestamp: number): AgentDo
   const taskId = RE_TASK_ID.exec(text)?.[1] ?? null;
   if (toolUseId === null && taskId === null) return null;
   return { kind: 'agent_done', sessionId, timestamp, toolUseId, taskId };
+}
+
+/**
+ * The API errors that stop a session on its account's usage, by the `error`
+ * Claude Code writes on the refusal. `rate_limit` is measured: 61 refusals on
+ * this machine from 2.1.273 to 2.1.301 (38 in a session's own turn), every
+ * one "You've hit your session limit". `billing_error` is the API key's
+ * version of the same stop (credit balance too low), from the error names the
+ * SDK declares: never seen here. `server_error` and `invalid_request` stop a
+ * turn too, but not on credit.
+ */
+const LIMIT_ERRORS = new Set(['rate_limit', 'billing_error']);
+
+/**
+ * When a refused turn's limit resets, from the numbers the refusal carries.
+ * Since 2.1.29x it names the window and its reset in seconds
+ * (`apiErrorParams.rate_limit_info.resetsAt`); before, only the text did, and
+ * the text is not read.
+ */
+function resetOf(raw: Record<string, unknown>): number | null {
+  const info = obj(obj(raw['apiErrorParams'])?.['rate_limit_info']) ?? obj(raw['quotaLimits']);
+  const secs = info?.['resetsAt'];
+  return typeof secs === 'number' && Number.isFinite(secs) && secs > 1e9 ? Math.round(secs * 1000) : null;
 }
 
 export function createStats(): ParseStats {
@@ -299,6 +336,12 @@ export function parseLine(line: string, stats: ParseStats): Record_ | null {
   switch (type) {
     case 'assistant': {
       if (!sessionId) return null;
+      // The session's own turn only: a subagent refused inside it is not the
+      // session stopping, and its refusal comes back to the session anyway.
+      if (raw['isApiErrorMessage'] === true && LIMIT_ERRORS.has(String(raw['error']))) {
+        if (raw['isSidechain'] === true || agentId) return null;
+        return { kind: 'limit', sessionId, timestamp: timeOf(raw), resetsAt: resetOf(raw) };
+      }
       const message = obj(raw['message']);
       if (!message) return null;
       const content = Array.isArray(message['content']) ? message['content'] : [];
