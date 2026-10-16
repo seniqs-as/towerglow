@@ -203,9 +203,9 @@ so the click opens one that follows what it is doing, read-only.
 
 - **It reads** the session records and transcripts of Claude Code
   (`~/.claude`) and Codex (`~/.codex`), the branch and reflog of your
-  projects' git repositories, and the names of the files in your projects, to
-  size the towers. It never reads the contents of your project files, nor the
-  text of Claude's replies.
+  projects' git repositories, and the names of the files and folders in your
+  projects, to size the towers. It never reads the contents of your project
+  files, nor the text of Claude's replies.
 - **It shows**, in a page served only to your own machine, metadata: project
   names, session titles, which tools run on which files, token counts, commit
   subjects. Flags like `--redact-paths`, `--no-titles` and

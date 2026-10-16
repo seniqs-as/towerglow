@@ -378,6 +378,10 @@ window.addEventListener('pointerup', () => {
  * which however exists only where someone is working.
  */
 const projectMenu = new ProjectMenu(document.getElementById('badges')!, {
+  onInfo: (projectId) => {
+    if (card.openProject === projectId) card.close();
+    else showProjectCard(projectId);
+  },
   onRename: (projectId, name) => socket?.send({ t: 'project.alias', projectId, name }),
   onHide: (projectId) => socket?.send({ t: 'project.disabled', projectId, disabled: true }),
   onReveal: (projectId) => socket?.send({ t: 'project.reveal', projectId }),
@@ -1519,6 +1523,7 @@ function refreshBadges(): void {
   // The open panel must follow the session it describes, not stay stuck on
   // what was true at the moment of the click.
   if (card.openFor) showCard(card.openFor);
+  else if (card.openProject) showProjectCard(card.openProject);
 }
 
 /**
@@ -1641,7 +1646,19 @@ function showCard(sessionId: string): void {
     focusTitle: jumpTitle(session),
     what: whatOf(session),
     trail: store.trail.of(sessionId),
+    view: worldView,
   });
+}
+
+/** A project's details, for one with no session and so no badge to open them from. */
+function showProjectCard(projectId: string): void {
+  const project = store.projects.get(projectId);
+  colony.setSelected(null);
+  if (!project) {
+    card.close();
+    return;
+  }
+  card.showProject(project, worldView);
 }
 
 

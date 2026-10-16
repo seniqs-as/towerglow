@@ -1,4 +1,6 @@
-import type { SessionInfo } from '../../shared/protocol.ts';
+import { MAX_SCANNED_DEPTH, MAX_SCANNED_FILES } from '../../shared/protocol.ts';
+import type { ProjectInfo, SessionInfo } from '../../shared/protocol.ts';
+import { floorsForSize, levelsForSize } from '../../shared/layout.ts';
 
 /**
  * A duration readable at a glance. At most two units: under a minute the
@@ -118,4 +120,39 @@ export function describeStep(tool: string, target: string | null, short = false)
   if (!target) return verb;
   const shown = short ? (target.split('/').pop() ?? target) : target;
   return `${verb} ${shown}`;
+}
+
+/** The view on screen, which decides what a project's height is counted in. */
+export type SizeView = 'city' | 'colony';
+
+/**
+ * How tall a project stands, and what that height is counted from (the
+ * user's request, 2026-10-16, after asking why one tower grew faster than
+ * the rest). The height in the unit of the view on screen -- floors in the
+ * city, decks in the colony: the same count on two scales -- then the files
+ * and folders the server's scan found. Approximate by construction: the scan
+ * skips hidden, dependency and build folders and stops at
+ * `MAX_SCANNED_FILES`, where a count only says "at least".
+ */
+export function sizeRows(project: Pick<ProjectInfo, 'size' | 'dirs'>, view: SizeView): [string, string][] {
+  const cut = project.size >= MAX_SCANNED_FILES;
+  return [
+    view === 'city'
+      ? ['floors', String(floorsForSize(project.size))]
+      : ['decks', String(levelsForSize(project.size))],
+    ['files', approxCount(project.size, cut)],
+    // A server older than the field sends none: a dash, never a zero.
+    ['folders', Number.isFinite(project.dirs) ? approxCount(project.dirs, cut) : '\u2014'],
+  ];
+}
+
+/** What the scan counts and what it leaves out: the reason the numbers are approximate. */
+export const SIZE_NOTE =
+  `Counted by name, up to ${MAX_SCANNED_FILES.toLocaleString('en-US')} files and ` +
+  `${MAX_SCANNED_DEPTH} levels deep, ` +
+  'without hidden folders, dependencies and build output.';
+
+function approxCount(n: number, cut: boolean): string {
+  const shown = n.toLocaleString('en-US');
+  return cut ? `${shown}+` : `\u2248 ${shown}`;
 }

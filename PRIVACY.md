@@ -53,10 +53,10 @@ the code that reads sessions.
 - `.git/HEAD` and the end of `.git/logs/HEAD` (the reflog): the branch, and
   the subject of each commit, checkout or reset. Author names and emails are
   dropped. Git itself is never run.
-- The names of the files in each project, to size its tower: at most 20,000
-  files and 10 levels deep, skipping hidden folders, `node_modules` and build
-  folders, never following symlinks. **The contents of your files are never
-  read.**
+- The names of the files and folders in each project, to size its tower and
+  to say on its card how many there are: at most 20,000 files and 10 levels
+  deep, skipping hidden folders, `node_modules` and build folders, never
+  following symlinks. **The contents of your files are never read.**
 
 ## What reaches the page
 
@@ -64,8 +64,8 @@ The page is served on `127.0.0.1` and needs the access token: nothing leaves
 your machine. What the server sends to it, built field by field in a single
 place (`src/server/parse/redact.ts`) with a length cap on every string:
 
-- projects: name, file count, branch, last commit subject (the folder path
-  stays in the server);
+- projects: name, file and folder count, branch, last commit subject (the
+  folder path stays in the server);
 - sessions: label, title, the "while you were away" summary, status, model,
   token counts, context used and when it was last compacted, when it stopped
   at a usage limit and when that limit resets, durations, the tool in use and

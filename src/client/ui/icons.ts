@@ -13,7 +13,7 @@ export const CODE_ICON =
   '<path d="M6.6 2.6 2 7l4.6 4.4M13.4 2.6 18 7l-4.6 4.4" fill="none" stroke="currentColor" ' +
   'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-/** A circled "i": the session's details, in the panel at the bottom right. */
+/** A circled "i": a session's or a project's details, in the panel at the bottom right. */
 export const INFO_ICON =
   '<svg viewBox="0 0 16 16" aria-hidden="true">' +
   '<circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.5"/>' +

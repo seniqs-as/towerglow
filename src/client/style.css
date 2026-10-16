@@ -633,6 +633,15 @@ body.is-inside .empty { display: none; }
   white-space: nowrap;
 }
 
+/* Under a project's numbers, what they are counted from: small and quiet,
+   it is read once, the first time a figure looks wrong. */
+.card__note {
+  margin: 8px 0 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #7f9bb3;
+}
+
 /* How it got there. Set apart from the data by a thin rule, not a big title:
    it is the same panel carrying on, not a second card. */
 .card__trail {

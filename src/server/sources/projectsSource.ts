@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertReadable, slugFor } from '../paths.ts';
 import type { PathPolicy } from '../paths.ts';
+import { MAX_SCANNED_DEPTH, MAX_SCANNED_FILES } from '../../shared/protocol.ts';
 
 /**
  * List of known projects.
@@ -98,8 +99,14 @@ const SKIP_DIRS = new Set([
   'coverage', 'Pods', '.gradle', '.idea', '.terraform', 'tmp', '.DS_Store',
 ]);
 
-const MAX_FILES = 20000;
-const MAX_DEPTH = 10;
+/** What a scan of a project's folder found: it sizes the tower, and the details say it. */
+export interface ProjectMeasure {
+  files: number;
+  /** The folders the scan went into: the skipped ones and those past the depth are not counted. */
+  dirs: number;
+}
+
+export const NOTHING_MEASURED: ProjectMeasure = { files: 0, dirs: 0 };
 
 /**
  * Size of the project in number of files. It decides the building's height.
@@ -107,17 +114,18 @@ const MAX_DEPTH = 10;
  * It is a BOUNDED scan: it stops at 20,000 files and 10 levels, and skips the
  * heavy directories. It reads only entry names and types, never a file's
  * contents, so it does not touch the read allow-list -- which governs
- * contents.
+ * contents. The folders are counted on the same pass, from the same names.
  */
-export function measureProject(cwd: string, homeDir?: string): number {
+export function measureProject(cwd: string, homeDir?: string): ProjectMeasure {
   // The home directory registered as a project is not a project: scanning it
   // is slow and produces a towering building that means nothing.
-  if (homeDir && path.resolve(cwd) === path.resolve(homeDir)) return 0;
+  if (homeDir && path.resolve(cwd) === path.resolve(homeDir)) return NOTHING_MEASURED;
 
   let count = 0;
+  let dirs = 0;
   const stack: { dir: string; depth: number }[] = [{ dir: cwd, depth: 0 }];
 
-  while (stack.length > 0 && count < MAX_FILES) {
+  while (stack.length > 0 && count < MAX_SCANNED_FILES) {
     const { dir, depth } = stack.pop()!;
     let entries: fs.Dirent[];
     try {
@@ -126,17 +134,18 @@ export function measureProject(cwd: string, homeDir?: string): number {
       continue; // permissions, broken links, vanished directory: carry on
     }
     for (const entry of entries) {
-      if (count >= MAX_FILES) break;
+      if (count >= MAX_SCANNED_FILES) break;
       if (entry.name.startsWith('.') && entry.isDirectory()) continue;
       if (entry.isDirectory()) {
-        if (SKIP_DIRS.has(entry.name) || depth >= MAX_DEPTH) continue;
+        if (SKIP_DIRS.has(entry.name) || depth >= MAX_SCANNED_DEPTH) continue;
+        dirs++;
         stack.push({ dir: path.join(dir, entry.name), depth: depth + 1 });
       } else if (entry.isFile()) {
         count++;
       }
     }
   }
-  return count;
+  return { files: count, dirs };
 }
 
 /**

@@ -51,6 +51,8 @@
 // v9 (additions, same version): `session.limitStoppedAt` and
 //     `session.limitResetsAt`. An old client ignores them and shows the
 //     stopped session as done.
+// v9 (additions, same version): `project.dirs`, the folders the size scan
+//     went into. An old client ignores it; a new one shows a dash without it.
 export const PROTOCOL_VERSION = 9;
 
 /** Beyond this length, a string in a DeltaEvent is a redaction bug. */
@@ -119,6 +121,14 @@ export interface TokenTotals {
 
 /* ─────────────────────────── entities ─────────────────────────── */
 
+/**
+ * Where the size scan of a project's folder stops. Shared because the page has
+ * to tell a count that ended from one that was cut: 20,000 is "20,000 or more".
+ */
+export const MAX_SCANNED_FILES = 20000;
+/** How many folders deep the same scan goes. */
+export const MAX_SCANNED_DEPTH = 10;
+
 export interface ProjectInfo {
   id: string;        // sha256(cwd).slice(0,16)
   /** What it is called on screen: the basename, or the alias you gave it. */
@@ -133,8 +143,13 @@ export interface ProjectInfo {
   firstSeenAt: number;
   /** Last known activity. Orders the city: the most recent stand in the center. */
   lastActiveAt: number;
-  /** The project's file count: decides how tall the building is. */
+  /**
+   * The project's file count: decides how tall the building is. A scan that
+   * reached `MAX_SCANNED_FILES` stopped there, so the folder holds at least that.
+   */
   size: number;
+  /** The folders the same scan went into: hidden, dependency and build folders are skipped. */
+  dirs: number;
   /** Subject of the last commit: it is what the sign shows instead of
    *  the session's handle. `null` if the project is not a repo. */
   lastCommit: string | null;

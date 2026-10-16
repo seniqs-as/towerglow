@@ -47,7 +47,7 @@ const live = (over: Partial<LiveSession> = {}): LiveSession => ({
 });
 
 const registry = (world: World, s: LiveSession): DeltaEvent[] =>
-  world.applyLiveSessions('claude', [s], () => true, () => 1000, () => 40);
+  world.applyLiveSessions('claude', [s], () => true, () => 1000, () => ({ files: 40, dirs: 0 }));
 
 // What the registry source makes of "status": "shell" and of "idle".
 const shellOnly = (): LiveSession => live({ status: 'idle', backgroundShell: true, updatedAt: 2000 });

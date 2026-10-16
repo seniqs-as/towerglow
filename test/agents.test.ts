@@ -36,7 +36,7 @@ function worldWithSession(): { world: World; sessionId: string } {
     kind: 'interactive', version: '2.1.0', model: 'opus',
     startedAt: 1000, updatedAt: 1000, statusSince: 1000,
   };
-  world.applyLiveSessions('claude', [live], () => true, () => 1000, () => 40);
+  world.applyLiveSessions('claude', [live], () => true, () => 1000, () => ({ files: 40, dirs: 0 }));
   return { world, sessionId: 's1' };
 }
 
@@ -154,7 +154,7 @@ test('an orphaned agent does not stay lit forever', () => {
   world.trackAgent(spawn('recent', 'Plan', Date.now() - 60_000));
   assert.equal(world.snapshot().agents.length, 2);
 
-  world.applyLiveSessions('claude', [live], () => true, () => 1000, () => 40);
+  world.applyLiveSessions('claude', [live], () => true, () => 1000, () => ({ files: 40, dirs: 0 }));
 
   const remaining = world.snapshot().agents.map((a) => a.id);
   assert.deepEqual(remaining, ['recent'], 'pruned the wrong ones');

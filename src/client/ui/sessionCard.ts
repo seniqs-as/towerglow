@@ -2,7 +2,8 @@ import type { ProjectInfo, SessionInfo } from '../../shared/protocol.ts';
 import type { Step } from '../state/trail.ts';
 import { PENDING_MAX_MS } from '../state/pendingFocus.ts';
 import { TOOL_COLOR } from '../world/palette.ts';
-import { describeActivity, describeStep, formatElapsed, limitStopText } from './format.ts';
+import { describeActivity, describeStep, formatElapsed, limitStopText, SIZE_NOTE, sizeRows } from './format.ts';
+import type { SizeView } from './format.ts';
 
 export interface CardContext {
   project: ProjectInfo | undefined;
@@ -16,6 +17,8 @@ export interface CardContext {
   what: string;
   /** The gestures already finished, most recent first. Empty until it has made any. */
   trail: readonly Step[];
+  /** The view on screen: the project's height is told in its floors or its decks. */
+  view: SizeView;
 }
 
 /**
@@ -29,6 +32,8 @@ export interface CardContext {
 export class SessionCard {
   #root: HTMLElement;
   #id: string | null = null;
+  /** The project whose details are open instead, when nobody works there. */
+  #projectId: string | null = null;
   #onFocus: (id: string) => void;
   #jump: HTMLButtonElement | null = null;
   #jumpTitle = '';
@@ -60,9 +65,14 @@ export class SessionCard {
     return this.#id;
   }
 
+  get openProject(): string | null {
+    return this.#projectId;
+  }
+
   close(): void {
-    if (this.#id === null) return;
+    if (this.#id === null && this.#projectId === null) return;
     this.#id = null;
+    this.#projectId = null;
     this.#jump = null;
     this.#root.hidden = true;
     this.#root.replaceChildren();
@@ -100,6 +110,7 @@ export class SessionCard {
 
   show(session: SessionInfo, ctx: CardContext): void {
     this.#id = session.id;
+    this.#projectId = null;
     this.#root.hidden = false;
     this.#root.dataset['provider'] = session.provider;
 
@@ -132,6 +143,7 @@ export class SessionCard {
       ['tool', session.provider === 'claude' ? 'Claude Code' : 'Codex CLI'],
       ['model', session.model ?? '—'],
       ['project', ctx.project?.name ?? '—'],
+      ...(ctx.project ? sizeRows(ctx.project, ctx.view) : []),
       ['branch', session.gitBranch ?? '—'],
       ['session', session.label],
       ['pid', String(session.pid)],
@@ -199,6 +211,43 @@ export class SessionCard {
     body.appendChild(dl);
     if (ctx.trail.length > 0) body.appendChild(trailBlock(ctx.trail));
 
+    this.#root.replaceChildren(head, body);
+  }
+
+  /**
+   * A project's own details: how tall it stands and what that is counted
+   * from. The badge's info button opens a session's card, and a project with
+   * no session has no badge: its nameplate's info button opens this, in the
+   * same place, so the numbers of any tower are one click away.
+   */
+  showProject(project: ProjectInfo, view: SizeView): void {
+    this.#id = null;
+    this.#jump = null;
+    this.#projectId = project.id;
+    this.#root.hidden = false;
+    delete this.#root.dataset['provider'];
+
+    const head = el('div', 'card__head');
+    head.appendChild(el('span', 'card__kicker', 'PROJECT'));
+    const close = el('button', 'card__close', '×');
+    close.setAttribute('type', 'button');
+    close.setAttribute('aria-label', 'Close');
+    close.dataset['close'] = 'yes';
+    head.appendChild(close);
+
+    const body = el('div', 'card__body');
+    body.appendChild(el('p', 'card__what', project.name));
+    // A ruin keeps the shape it had: the numbers are the last ones seen.
+    if (!project.exists) body.appendChild(el('p', 'card__wait', 'The folder is gone from disk: these are the last numbers seen.'));
+    const rows: [string, string][] = [...sizeRows(project, view), ['branch', project.branch ?? '—']];
+    const dl = el('dl', 'card__rows');
+    for (const [k, v] of rows) {
+      const row = el('div', '');
+      row.appendChild(el('dt', '', k));
+      row.appendChild(el('dd', '', v));
+      dl.appendChild(row);
+    }
+    body.append(dl, el('p', 'card__note', SIZE_NOTE));
     this.#root.replaceChildren(head, body);
   }
 }

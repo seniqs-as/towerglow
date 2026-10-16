@@ -1,6 +1,8 @@
-import { CLOSE_ICON, EDIT_ICON, FOLDER_ICON, iconButton } from './icons.ts';
+import { CLOSE_ICON, EDIT_ICON, FOLDER_ICON, INFO_ICON, iconButton } from './icons.ts';
 
 export interface ProjectMenuActions {
+  /** The project's details: how tall it stands, and the files and folders that make it so. */
+  onInfo: (projectId: string) => void;
   /** `name: null` brings back the real name. */
   onRename: (projectId: string, name: string | null) => void;
   onHide: (projectId: string) => void;
@@ -11,7 +13,7 @@ export interface ProjectMenuActions {
 const MENU_GAP = 4;
 
 /**
- * Rename and disable for ANY project, on or off.
+ * Details, rename and disable for ANY project, on or off.
  *
  * The same two actions used to live only in the session badge's tooltip, and
  * that badge exists only where someone is working: idle projects -- which
@@ -58,6 +60,16 @@ export class ProjectMenu {
     });
     this.#input.addEventListener('blur', () => this.#stopEditing());
 
+    // First, as in the badge's bubble: a tower with nobody on it has no
+    // badge, and its numbers would otherwise be nowhere (the user's request,
+    // 2026-10-16).
+    const info = iconButton('pmenu__info', 'Show this project\'s details', INFO_ICON);
+    info.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = this.#openFor;
+      if (open) this.#act.onInfo(open.id);
+    });
+
     this.#reveal = iconButton('pmenu__reveal', 'Open this folder', FOLDER_ICON);
     this.#reveal.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -86,7 +98,7 @@ export class ProjectMenu {
 
     const bar = document.createElement('span');
     bar.className = 'pmenu__actions';
-    bar.append(this.#reveal, edit, hide);
+    bar.append(info, this.#reveal, edit, hide);
 
     this.#root.append(this.#body, bar);
     // The menu takes the mouse, the container does not: twenty pixels of

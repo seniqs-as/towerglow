@@ -11,6 +11,7 @@ import { RingBuffer } from './ringBuffer.ts';
 import type { PlacementStore } from './placement.ts';
 import type { Prefs } from './prefs.ts';
 import type { LiveSession } from '../providers/types.ts';
+import type { ProjectMeasure } from '../sources/projectsSource.ts';
 
 export interface WorldOptions {
   homeDir: string;
@@ -209,7 +210,7 @@ export class World {
     cwds: readonly string[],
     existsCheck: (cwd: string) => boolean,
     lastActive: (cwd: string) => number,
-    measure: (cwd: string) => number,
+    measure: (cwd: string) => ProjectMeasure,
   ): DeltaEvent[] {
     const out: DeltaEvent[] = [];
     for (const cwd of cwds) {
@@ -219,7 +220,7 @@ export class World {
     return this.#record(out);
   }
 
-  #ensureProject(cwd: string, exists: boolean, lastActiveAt: number, size: number): DeltaEvent | null {
+  #ensureProject(cwd: string, exists: boolean, lastActiveAt: number, size: ProjectMeasure): DeltaEvent | null {
     const id = projectIdFor(cwd);
     const known = this.#projects.get(id);
     if (known) {
@@ -239,7 +240,8 @@ export class World {
       exists,
       firstSeenAt: Date.now(),
       lastActiveAt,
-      size,
+      size: size.files,
+      dirs: size.dirs,
       lastCommit: null,
       branch: null,
       commits: 0,
@@ -266,7 +268,7 @@ export class World {
    * paid forever. An unchanged size says nothing: the event rebuilds the
    * map on the other side.
    */
-  refreshSizes(measure: (cwd: string) => number): DeltaEvent[] {
+  refreshSizes(measure: (cwd: string) => ProjectMeasure): DeltaEvent[] {
     const worked = new Set<string>();
     for (const s of this.#sessions.values()) worked.add(s.projectId);
     const out: DeltaEvent[] = [];
@@ -274,9 +276,9 @@ export class World {
       const project = this.#projects.get(id);
       const cwd = this.#cwds.get(id);
       if (!project || cwd === undefined || !project.exists) continue;
-      const size = measure(cwd);
-      if (size === project.size) continue;
-      const next = { ...project, size };
+      const { files, dirs } = measure(cwd);
+      if (files === project.size && dirs === project.dirs) continue;
+      const next = { ...project, size: files, dirs };
       this.#projects.set(id, next);
       out.push({ t: 'project.add', project: next });
     }
@@ -300,7 +302,7 @@ export class World {
     live: readonly LiveSession[],
     existsCheck: (cwd: string) => boolean,
     lastActive: (cwd: string) => number,
-    measure: (cwd: string) => number,
+    measure: (cwd: string) => ProjectMeasure,
   ): DeltaEvent[] {
     const out: DeltaEvent[] = [];
     const now = Date.now();

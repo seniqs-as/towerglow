@@ -139,7 +139,7 @@ const usage = (tokens: number, agentId: string | null = null): DeltaEvent => ({
 /** A Claude Code session the transcript said was refused at the limit. */
 function stoppedClaude(): World {
   const w = world();
-  w.applyLiveSessions('claude', [live('claude')], () => true, () => NOW, () => 40);
+  w.applyLiveSessions('claude', [live('claude')], () => true, () => NOW, () => ({ files: 40, dirs: 0 }));
   w.applySessionPatch(SID, { limitStoppedAt: NOW, limitResetsAt: RESETS_S * 1000 }, NOW);
   return w;
 }
@@ -148,7 +148,7 @@ test('a registry pass does not erase the stop the transcript told', () => {
   // The registry says `idle` and knows nothing of why: a pass a second later
   // putting the field back to null would make the cross last one tick.
   const w = stoppedClaude();
-  const events = w.applyLiveSessions('claude', [live('claude')], () => true, () => NOW + 1000, () => 40);
+  const events = w.applyLiveSessions('claude', [live('claude')], () => true, () => NOW + 1000, () => ({ files: 40, dirs: 0 }));
   assert.equal(w.session(SID)?.limitStoppedAt, NOW);
   assert.equal(events.some((e) => e.t === 'session.update' && 'limitStoppedAt' in e.patch), false);
 });
@@ -178,13 +178,13 @@ test('a reply the API served ends the stop; the refusal and a subagent do not', 
 
 test('a Codex stop is its provider\'s to say, both ways', () => {
   const w = world();
-  const born = w.applyLiveSessions('codex', [live('codex', { at: null })], () => true, () => NOW, () => 40);
+  const born = w.applyLiveSessions('codex', [live('codex', { at: null })], () => true, () => NOW, () => ({ files: 40, dirs: 0 }));
   const added = born.find((e) => e.t === 'session.add');
   assert.ok(added && added.t === 'session.add');
   assert.equal(added.session.limitStoppedAt, null);
 
   const stopped = w.applyLiveSessions('codex', [live('codex', { at: NOW, resets: NOW + 3_600_000 })],
-    () => true, () => NOW, () => 40);
+    () => true, () => NOW, () => ({ files: 40, dirs: 0 }));
   assert.ok(stopped.some((e) => e.t === 'session.update' &&
     e.patch.limitStoppedAt === NOW && e.patch.limitResetsAt === NOW + 3_600_000));
   // A served reply does not clear it here: the provider says it on every
@@ -192,10 +192,10 @@ test('a Codex stop is its provider\'s to say, both ways', () => {
   assert.deepEqual(w.resumeAfterLimit(usage(317)), []);
 
   const again = w.applyLiveSessions('codex', [live('codex', { at: NOW, resets: NOW + 3_600_000 })],
-    () => true, () => NOW, () => 40);
+    () => true, () => NOW, () => ({ files: 40, dirs: 0 }));
   assert.equal(again.some((e) => e.t === 'session.update' && 'limitStoppedAt' in e.patch), false,
     'the same stop sent again on every provider tick');
-  const restarted = w.applyLiveSessions('codex', [live('codex', { at: null })], () => true, () => NOW, () => 40);
+  const restarted = w.applyLiveSessions('codex', [live('codex', { at: null })], () => true, () => NOW, () => ({ files: 40, dirs: 0 }));
   assert.ok(restarted.some((e) => e.t === 'session.update' &&
     e.patch.limitStoppedAt === null && e.patch.limitResetsAt === null));
 });

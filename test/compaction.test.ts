@@ -86,9 +86,9 @@ test('a registry pass does not erase the compaction the transcript told', () => 
   // happened. A pass a second later must not put the field back to null, or
   // the caption would last until the next registry tick.
   const w = world();
-  w.applyLiveSessions('claude', [live('claude')], () => true, () => NOW, () => 40);
+  w.applyLiveSessions('claude', [live('claude')], () => true, () => NOW, () => ({ files: 40, dirs: 0 }));
   w.applySessionPatch(SID, { compactedAt: NOW }, NOW);
-  const events = w.applyLiveSessions('claude', [live('claude')], () => true, () => NOW + 1000, () => 40);
+  const events = w.applyLiveSessions('claude', [live('claude')], () => true, () => NOW + 1000, () => ({ files: 40, dirs: 0 }));
 
   assert.equal(w.session(SID)?.compactedAt, NOW);
   assert.equal(events.some((e) => e.t === 'session.update' && 'compactedAt' in e.patch), false);
@@ -96,14 +96,14 @@ test('a registry pass does not erase the compaction the transcript told', () => 
 
 test('a Codex compaction travels with the live session, once', () => {
   const w = world();
-  const born = w.applyLiveSessions('codex', [live('codex', null)], () => true, () => NOW, () => 40);
+  const born = w.applyLiveSessions('codex', [live('codex', null)], () => true, () => NOW, () => ({ files: 40, dirs: 0 }));
   const added = born.find((e) => e.t === 'session.add');
   assert.ok(added && added.t === 'session.add');
   assert.equal(added.session.compactedAt, null, 'no compaction read is null, not a time');
 
-  const first = w.applyLiveSessions('codex', [live('codex', NOW)], () => true, () => NOW, () => 40);
+  const first = w.applyLiveSessions('codex', [live('codex', NOW)], () => true, () => NOW, () => ({ files: 40, dirs: 0 }));
   assert.ok(first.some((e) => e.t === 'session.update' && e.patch.compactedAt === NOW));
-  const again = w.applyLiveSessions('codex', [live('codex', NOW)], () => true, () => NOW, () => 40);
+  const again = w.applyLiveSessions('codex', [live('codex', NOW)], () => true, () => NOW, () => ({ files: 40, dirs: 0 }));
   assert.equal(again.some((e) => e.t === 'session.update' && 'compactedAt' in e.patch), false,
     'the same compaction sent again on every provider tick');
 });

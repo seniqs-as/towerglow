@@ -328,7 +328,7 @@ function worldWith(adopt: (pid: number, sessionId: string) => ProviderId | null)
 }
 
 function apply(world: World, sessions: LiveSession[]): DeltaEvent[] {
-  return [...world.applyLiveSessions('claude', sessions, () => true, () => NOW, () => 40)];
+  return [...world.applyLiveSessions('claude', sessions, () => true, () => NOW, () => ({ files: 40, dirs: 0 }))];
 }
 
 test('a discovered session whose pid belongs to the CEOs does not settle in the project', (t) => {

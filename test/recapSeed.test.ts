@@ -215,7 +215,7 @@ function worldWith(seed: SeededRecap | null): World {
 
 test('the session is born with the inherited recap, marked as such', () => {
   const world = worldWith({ text: 'we were fixing the recap', at: NOW - HOUR, inherited: true });
-  const added = sessionAdd(world.applyLiveSessions('claude', [live(MINE)], () => true, () => NOW, () => 40));
+  const added = sessionAdd(world.applyLiveSessions('claude', [live(MINE)], () => true, () => NOW, () => ({ files: 40, dirs: 0 })));
 
   assert.equal(added.recap, 'we were fixing the recap');
   assert.equal(added.recapAt, NOW - HOUR);
@@ -224,7 +224,7 @@ test('the session is born with the inherited recap, marked as such', () => {
 
 test('its own first recap switches the seed off', () => {
   const world = worldWith({ text: 'from the session before', at: NOW - HOUR, inherited: true });
-  world.applyLiveSessions('claude', [live(MINE)], () => true, () => NOW, () => 40);
+  world.applyLiveSessions('claude', [live(MINE)], () => true, () => NOW, () => ({ files: 40, dirs: 0 }));
 
   world.applySessionPatch(MINE, { recap: 'its own', recapAt: NOW, recapInherited: false }, NOW);
   const session = world.session(MINE);
@@ -234,7 +234,7 @@ test('its own first recap switches the seed off', () => {
 
 test('without a seed the session is born silent, as before', () => {
   const world = worldWith(null);
-  const added = sessionAdd(world.applyLiveSessions('claude', [live(MINE)], () => true, () => NOW, () => 40));
+  const added = sessionAdd(world.applyLiveSessions('claude', [live(MINE)], () => true, () => NOW, () => ({ files: 40, dirs: 0 })));
 
   assert.equal(added.recap, null);
   assert.equal(added.recapInherited, false);

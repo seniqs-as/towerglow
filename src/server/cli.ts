@@ -34,8 +34,9 @@ import { assertSafe, clampUnsafe } from './parse/redact.ts';
 import type { RedactOptions } from './parse/redact.ts';
 import {
   readKnownProjectPaths, readPlanLabel, existsOnDisk, makeExcluder, projectLastActive,
-  measureProject,
+  measureProject, NOTHING_MEASURED,
 } from './sources/projectsSource.ts';
+import type { ProjectMeasure } from './sources/projectsSource.ts';
 import type { PathPolicy } from './paths.ts';
 import { PROTOCOL_VERSION } from '../shared/protocol.ts';
 import type { DeltaEvent, ProviderId } from '../shared/protocol.ts';
@@ -752,13 +753,13 @@ async function start(cfg: Config): Promise<number> {
   // Size is a directory scan, and redoing it at every registry update would
   // be wasteful: it is measured when a project is first seen, and from then
   // on only by `sizeTimer` below, where somebody is working.
-  const sizeCache = new Map<string, number>();
-  const measureNow = (cwd: string): number => {
-    const size = existsOnDisk(cwd) ? measureProject(cwd, cfg.homeDir) : 0;
+  const sizeCache = new Map<string, ProjectMeasure>();
+  const measureNow = (cwd: string): ProjectMeasure => {
+    const size = existsOnDisk(cwd) ? measureProject(cwd, cfg.homeDir) : NOTHING_MEASURED;
     sizeCache.set(cwd, size);
     return size;
   };
-  const measure = (cwd: string): number => sizeCache.get(cwd) ?? measureNow(cwd);
+  const measure = (cwd: string): ProjectMeasure => sizeCache.get(cwd) ?? measureNow(cwd);
 
   const knownProjects = readKnownProjectPaths(cfg.homeDir, policy).filter(known);
 

@@ -47,7 +47,7 @@ const live = (over: Partial<LiveSession> = {}): LiveSession => ({
 const shellOnly = (updatedAt: number): LiveSession => live({ status: 'idle', backgroundShell: true, updatedAt });
 
 const registry = (world: World, s: LiveSession): DeltaEvent[] =>
-  world.applyLiveSessions('claude', [s], () => true, () => 1000, () => 40);
+  world.applyLiveSessions('claude', [s], () => true, () => 1000, () => ({ files: 40, dirs: 0 }));
 
 const launched = (id: string, at: number, spawnedAgentId: string | null = null): DeltaEvent => ({
   t: 'tool.end', id, sessionId: 's1', at, durationMs: 200, ok: true,
@@ -121,7 +121,7 @@ test('a session that exits takes its shells with it', () => {
   const world = newWorld();
   registry(world, live());
   world.openShell(launched('toolu_wait', 1500));
-  world.applyLiveSessions('claude', [], () => true, () => 1000, () => 40);
+  world.applyLiveSessions('claude', [], () => true, () => 1000, () => ({ files: 40, dirs: 0 }));
   registry(world, shellOnly(5000));
   assert.equal(statusOf(world), 'idle');
 });
