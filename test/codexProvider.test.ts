@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { CodexProvider } from '../src/server/providers/codex/provider.ts';
 import { parseRolloutLine, readLastLimits, readLastPlan, readLastWindows, readMeta } from '../src/server/providers/codex/rollouts.ts';
 import type { DeltaEvent } from '../src/shared/protocol.ts';
@@ -579,3 +580,47 @@ test('a server that starts shows Codex\'s bars even when the newest rollout name
   assert.equal(seeded.limits.plan, 'plus');
 });
 
+
+test('a new rollout gets its pid in seconds, not at the next 30 s refresh', async () => {
+  /*
+   * The pid is how the world tells a CEO's Codex worker from a session of
+   * yours, and it is asked when the session is first seen. Read only every
+   * 30 s, a worker born between two reads had pid 0 and was taken for yours
+   * (2026-10-22). Now a rollout whose pid is unknown triggers a read soon.
+   */
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-codex-pid-'));
+  const now = new Date();
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  const day = path.join(dir, 'sessions', String(now.getFullYear()), pad(now.getMonth() + 1), pad(now.getDate()));
+  fs.mkdirSync(day, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'state_5.sqlite'), '');
+  const db = new DatabaseSync(path.join(dir, 'logs_2.sqlite'));
+  db.exec('CREATE TABLE logs (thread_id TEXT, process_uuid TEXT, ts INTEGER)');
+  const provider = new CodexProvider({
+    codexDir: dir,
+    policy: { claudeDir: '/nowhere/.claude', codexDir: dir, homeDir: '/Users/tester' },
+    redactPaths: false, cmdNames: true, titles: true,
+    known: () => true, produces: () => true, devAssert: true, stats: createStats(),
+  });
+  const sessions: LiveSession[] = [];
+  provider.start({
+    onProjects: () => {},
+    onSessions: (s) => sessions.splice(0, sessions.length, ...s),
+    onEvents: () => {},
+  });
+  try {
+    // Started with no rollout: the first tick has read the (empty) pids.
+    await new Promise((r) => setTimeout(r, 300));
+    db.prepare('INSERT INTO logs VALUES (?, ?, ?)').run(SID, `pid:${process.pid}:0f0f`, Math.floor(Date.now() / 1000));
+    const t = Date.now();
+    fs.writeFileSync(path.join(day, `rollout-2026-10-22T10-00-00-${SID}.jsonl`),
+      line({ timestamp: iso(t), ordinal: 0, type: 'session_meta', payload: { session_id: SID, cwd: PROJECT, cli_version: '0.154.0' } }) +
+      line({ timestamp: iso(t), ordinal: 1, type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1', started_at: Math.floor(t / 1000) } }));
+    await new Promise((r) => setTimeout(r, 3500));
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]!.pid, process.pid);
+  } finally {
+    provider.stop();
+    db.close();
+  }
+});

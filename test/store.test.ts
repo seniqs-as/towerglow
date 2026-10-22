@@ -98,3 +98,41 @@ test('Reports started over: the store forgets the erased jobs and keeps the runn
   s.apply({ t: 'batch', at: T0, seq: 3, events: [{ t: 'ceo.cleared', at: T0, what: 'board', keep: [] }] });
   assert.deepEqual([...s.jobs.keys()], ['live']);
 });
+
+/*
+ * The last commit, on the page's copy of the project. The server keeps it in
+ * its model (World.applyGit) and sends only the git event; the page kept the
+ * snapshot's, so a topology change within 12 s of a commit -- a worker's
+ * session leaving right after committing -- put the previous commit's subject
+ * in the caption (2026-10-22), and Statistics counted commits from the snapshot.
+ */
+const project = (over: Record<string, unknown> = {}) => ({
+  id: 'p1', name: 'alpha', realName: 'alpha', disabled: false, slot: 0, exists: true,
+  firstSeenAt: T0, lastActiveAt: T0, size: 10, dirs: 2, lastCommit: 'Old subject', branch: 'main',
+  commits: 3, providers: ['claude' as const], ...over,
+});
+const git = (kind: 'commit' | 'checkout' | 'merge', subject: string | null, branch = 'main'): DeltaEvent => ({
+  t: 'git', projectId: 'p1', at: T0 + 1000, kind, sha: 'abc1234', branch, subject,
+});
+
+test('a commit updates the page\'s project, so a later refresh shows its subject and not the previous one', () => {
+  const { s } = store();
+  s.apply({ t: 'snapshot', at: T0, projects: [project()], agents: [], files: [], recent: [], limits: [],
+    sessions: [session('worker', 'claude')] });
+  // The commit, then the worker's session leaving: a topology change in the same breath.
+  s.apply({ t: 'batch', at: T0, seq: 1, events: [git('commit', 'New subject'), { t: 'session.remove', at: T0, id: 'worker' }] });
+  const p = s.projects.get('p1');
+  assert.equal(p?.lastCommit, 'New subject');
+  assert.equal(p?.commits, 4);
+});
+
+test('a checkout moves the branch, a merge keeps the commit subject, as on the server', () => {
+  const { s } = store();
+  s.apply({ t: 'snapshot', at: T0, projects: [project()], agents: [], files: [], recent: [], limits: [], sessions: [] });
+  s.apply({ t: 'batch', at: T0, seq: 1, events: [git('checkout', 'moving from main to feature', 'feature')] });
+  s.apply({ t: 'batch', at: T0, seq: 2, events: [git('merge', 'Merge branch x', 'feature')] });
+  const p = s.projects.get('p1');
+  assert.equal(p?.branch, 'feature');
+  assert.equal(p?.lastCommit, 'Old subject');
+  assert.equal(p?.commits, 3);
+});

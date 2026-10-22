@@ -386,6 +386,20 @@ export class World {
       }
 
       const patch: Partial<SessionInfo> = {};
+      // A Codex session can be born before its pid is known: the pids come
+      // from logs_2.sqlite, read every 30 s, while a new rollout is seen within
+      // a second. Asked only at birth, with pid 0, a CEO's Codex worker was
+      // never adopted and stayed "1 active session of yours" in the plan, which
+      // holds that project's queue (found on 2026-10-22 with a stand-in `codex`
+      // that wrote its pid as Codex does). So the question waits for the pid,
+      // and is still asked once: when the pid first appears.
+      if (existing.pid <= 1 && s.pid > 1) {
+        patch.pid = s.pid;
+        if (existing.spawnedByCeo === null) {
+          const adopted = this.#opts.adoptCeoSession(s.pid, s.sessionId);
+          if (adopted !== null) patch.spawnedByCeo = adopted;
+        }
+      }
       if (existing.status !== status) patch.status = status;
       if (existing.statusConfidence !== s.statusConfidence) patch.statusConfidence = s.statusConfidence;
       if (s.title !== null && existing.title !== s.title) patch.title = s.title;

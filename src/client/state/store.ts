@@ -298,6 +298,23 @@ export class Store {
         this.files.delete(ev.fileId);
         return 'files';
 
+      case 'git': {
+        // The rule of World.applyGit, on the page's copy of the project. The
+        // server keeps the last commit in its model but sends only the event,
+        // and the page's copy stayed the snapshot's: every topology change
+        // within 12 s of a commit put the PREVIOUS commit's subject in its
+        // caption, the moment a worker's session left with its commit made
+        // (2026-10-22), and Statistics counted commits from the snapshot.
+        const p = this.projects.get(ev.projectId);
+        if (!p) return 'none';
+        const lastCommit = ev.kind === 'commit' && ev.subject ? ev.subject : p.lastCommit;
+        const commits = p.commits + (ev.kind === 'commit' ? 1 : 0);
+        if (lastCommit !== p.lastCommit || ev.branch !== p.branch || commits !== p.commits) {
+          this.projects.set(ev.projectId, { ...p, lastCommit, branch: ev.branch, commits });
+        }
+        return 'none';
+      }
+
       default:
         return 'none';
     }

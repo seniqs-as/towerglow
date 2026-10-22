@@ -19,10 +19,20 @@ const POLL_MS = 900;
  * How often to re-read the PIDs from the logs.
  *
  * It does not drive the scene's pulse -- the rollout tells the status -- it
- * only lets us bring the right terminal to the front, so the SQLite query is
- * paid rarely instead of on every tick.
+ * lets us bring the right terminal to the front and tells a CEO's worker from
+ * a session of yours, so the SQLite query is paid rarely instead of on every
+ * tick.
  */
 const PID_REFRESH_MS = 30_000;
+/**
+ * Sooner while a session's pid is not known yet: the pid is what the world
+ * asks "is this a CEO's worker?" with, and a worker seen with pid 0 read as a
+ * session of yours until the next refresh. Every PID_CHASE_STEP_MS for the
+ * first PID_CHASE_MS of a session's life, then back to the slow pace: a
+ * session whose pid never shows up does not keep the query running.
+ */
+const PID_CHASE_STEP_MS = 2_000;
+const PID_CHASE_MS = 20_000;
 /**
  * A session with no activity for this long is no longer live.
  *
@@ -166,6 +176,8 @@ export class CodexProvider implements Provider {
   #names = new Map<string, string>();
   #pids = new Map<string, { pid: number; lastTs: number }>();
   #pidsReadAt = 0;
+  /** Sessions seen without a pid yet, and since when: see PID_CHASE_MS. */
+  #pidChase = new Map<string, number>();
   #limitsSeeded = false;
   #heldSeeded = false;
   /**
@@ -263,16 +275,22 @@ export class CodexProvider implements Provider {
     const now = Date.now();
 
     if (this.#opts.titles) this.#names = this.#store.readThreadNames();
-    if (now - this.#pidsReadAt >= PID_REFRESH_MS) {
-      this.#pids = this.#store.readThreadPids();
-      this.#pidsReadAt = now;
-    }
 
     // A subagent rollout carries its parent's session_id. Counted as a session,
     // the approvals guardian kept an archived chat on stage for half an hour,
     // with the old chat's context, and could be attached in the chat's place.
     const found = discoverRollouts(this.#opts.codexDir, this.#opts.policy, now - LIVE_WINDOW_MS)
       .filter((m) => !m.subagent && this.#opts.produces(m.cwd));
+
+    const pidless = new Set(found.filter((m) => !this.#pids.has(m.sessionId)).map((m) => m.sessionId));
+    for (const id of [...this.#pidChase.keys()]) if (!pidless.has(id)) this.#pidChase.delete(id);
+    for (const id of pidless) if (!this.#pidChase.has(id)) this.#pidChase.set(id, now);
+    const chasing = [...this.#pidChase.values()].some((since) => now - since < PID_CHASE_MS);
+    const since = now - this.#pidsReadAt;
+    if (since >= PID_REFRESH_MS || (chasing && since >= PID_CHASE_STEP_MS)) {
+      this.#pids = this.#store.readThreadPids();
+      this.#pidsReadAt = now;
+    }
 
     const projects = [
       ...this.#store.readDeclaredProjects().filter((p) => this.#opts.known(p)),

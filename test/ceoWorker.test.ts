@@ -364,6 +364,40 @@ test('the question is asked only once, at birth', (t) => {
   assert.deepEqual(asked, [WORKER_PID]);
 });
 
+test('a worker born before its pid is known is adopted when the pid appears', (t) => {
+  /*
+   * Codex's pids come from logs_2.sqlite, read every 30 s, while a new rollout
+   * is seen within a second: a CEO's Codex worker was born with pid 0, asked
+   * once, never adopted, and stayed "1 active session of yours" in the plan,
+   * holding that project's queue (2026-10-22).
+   */
+  const asked: number[] = [];
+  const world = worldWith((pid) => { asked.push(pid); return pid === WORKER_PID ? 'codex' : null; });
+  const pass = (pid: number): DeltaEvent[] => [...world.applyLiveSessions('codex',
+    [live({ provider: 'codex', pid, statusConfidence: 'inferred' })], () => true, () => NOW, () => ({ files: 40, dirs: 0 }))];
+  const born = pass(0).find((e) => e.t === 'session.add');
+  assert.ok(born);
+  assert.equal(born.session.spawnedByCeo, null);
+  const later = pass(WORKER_PID).find((e) => e.t === 'session.update');
+  assert.ok(later && later.t === 'session.update');
+  assert.equal(later.patch.pid, WORKER_PID);
+  assert.equal(later.patch.spawnedByCeo, 'codex');
+  pass(WORKER_PID);
+  assert.deepEqual(asked, [0, WORKER_PID], 'at birth, then once when the pid appears, and never again');
+});
+
+test('an ordinary session whose pid appears late gets the pid and stays yours', (t) => {
+  // The pid is what brings its terminal forward: it is kept even when nobody adopts it.
+  const world = worldWith(() => null);
+  const pass = (pid: number): DeltaEvent[] => [...world.applyLiveSessions('codex',
+    [live({ provider: 'codex', pid: pid, statusConfidence: 'inferred' })], () => true, () => NOW, () => ({ files: 40, dirs: 0 }))];
+  pass(0);
+  const later = pass(47539).find((e) => e.t === 'session.update');
+  assert.ok(later && later.t === 'session.update');
+  assert.equal(later.patch.pid, 47539);
+  assert.equal(later.patch.spawnedByCeo, undefined);
+});
+
 test('a worker that disappears from the registry is reaped like everyone else', (t) => {
   // The case the old code got wrong: it skipped reaping for EVERY session with
   // spawnedByCeo, and one discovered from the registry would have stayed lit
