@@ -23,6 +23,11 @@ keeping part of your quota free for you. See
 
 Towerglow is an independent project, not affiliated with Anthropic or OpenAI.
 
+Towerglow in two and a half minutes, on a set of made-up projects. It is
+narrated, and GitHub starts it muted:
+
+https://github.com/user-attachments/assets/5b28bb8e-ae2e-4452-b99b-ac9f0f0b80eb
+
 ## Two modes
 
 Towerglow starts as a read-only observatory. An optional module, the CEOs,
