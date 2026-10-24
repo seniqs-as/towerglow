@@ -168,6 +168,37 @@ export interface ProjectInfo {
   providers: ProviderId[];
 }
 
+/**
+ * One month of a project's work, as the tower's card shows it (the user's
+ * request, 2026-10-24: what a project took, to show its funders).
+ */
+export interface WorkMonth {
+  /** `YYYY-MM`: the month the sessions began in, as the history files them. */
+  month: string;
+  sessions: number;
+  /** How many had their time read: fewer than `sessions` makes the hours a floor. */
+  timed: number;
+  tokens: TokenTotals;
+  /** The agents' turns, summed across sessions. */
+  aiMs: number;
+  /** Yours, estimated from when you sent messages, shared with the other projects you had going. */
+  operatorMs: number;
+}
+
+/**
+ * The longest stretch one message of yours can stand for, on a project's
+ * card. Why ten minutes, and what it moves: `server/state/workMeter.ts`.
+ * Shared because the card names it.
+ */
+export const OPERATOR_CAP_MS = 10 * 60_000;
+
+export interface ProjectWork {
+  /** Newest first, at most a year: the history keeps no more. */
+  months: WorkMonth[];
+  /** Sessions still open, counted up to now. */
+  live: number;
+}
+
 export interface SessionInfo {
   id: string;                   // sessionId (UUID)
   projectId: string;
@@ -1268,6 +1299,8 @@ export type ServerFrame =
   | { t: 'plan.doc'; at: number; plan: PlanDoc; refused: string | null }
   | { t: 'reveal.result'; projectId: string; ok: boolean; reason: string | null }
   | { t: 'terminal.result'; projectId: string; ok: boolean; reason: string | null }
+  /** A project's work, to whoever opened its card. `null`: no such project. */
+  | { t: 'work.result'; projectId: string; work: ProjectWork | null }
   | { t: 'error'; code: 'version_mismatch' | 'unauthorized' | 'internal'; detail?: string };
 
 export type ClientFrame =
@@ -1300,6 +1333,12 @@ export type ClientFrame =
    * Only the id travels, as for `project.reveal`. Accepted only if `caps.focus`.
    */
   | { t: 'project.terminal'; projectId: string }
+  /**
+   * A project's tokens and hours, month by month: pulled when its card
+   * opens, never pushed. Reading them can mean reading transcripts, and
+   * nobody needs them until they look.
+   */
+  | { t: 'project.work'; projectId: string }
   /* ── organization: accepted only if caps.ceo ── */
   /**
    * A question to one CEO.

@@ -705,6 +705,48 @@ body.is-inside .empty { display: none; }
 
 .card__step-note[data-state="fail"] { color: #ff6b81; }
 
+/* What a project took. Set apart like the trail: the same card carrying on. */
+.card__work {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(140, 190, 225, 0.16);
+}
+
+/* Month by month, the newest on top. A year at most: past a dozen rows it
+   scrolls instead of pushing the card off the screen. */
+.card__months {
+  margin-top: 8px;
+  max-height: 156px;
+  overflow-y: auto;
+}
+
+.card__months table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.card__months th {
+  color: #7f9bb3;
+  font-weight: normal;
+  letter-spacing: 0.06em;
+  text-align: right;
+  padding: 0 0 3px 10px;
+}
+
+.card__months td {
+  text-align: right;
+  padding: 1px 0 1px 10px;
+  white-space: nowrap;
+}
+
+.card__months th:first-child,
+.card__months td:first-child {
+  text-align: left;
+  padding-left: 0;
+}
+
 /* ─────────────────── usage per tool ─────────────────── */
 
 /* Top right, on the opposite side from the counters: it is a figure you

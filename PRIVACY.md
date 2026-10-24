@@ -30,6 +30,12 @@ the code that reads sessions.
   refused at a usage limit (the time, and the reset the refusal declares as
   a number; its wording is not read). The text of Claude's replies and of its
   thinking is never extracted.
+  For a project's hours (see below), a transcript is also read once from the
+  beginning when its session ends, and the transcripts of the last 30 days
+  that have no hours yet are read once at startup, in the background: of
+  each line only its time and its kind (your message, a reply, the end of a
+  turn and how long it took) are kept, and whether the session was started
+  by a script (`claude -p`) rather than typed into.
 - `~/.claude.json`: the list of your projects, and the name of your plan
   (for example "max 5x"), nothing else.
 - Nothing else in `~/.claude` is on the allow-list. Separately, `settings.json`
@@ -43,7 +49,10 @@ the code that reads sessions.
   and end, whether a turn was refused at the usage limit (its error code,
   never its message), the binary name of commands, the
   paths and line counts of file changes, and the **first line of your last
-  prompt**, which Codex sessions use as their title.
+  prompt**, which Codex sessions use as their title. For a project's hours,
+  a session's log is read once from the beginning when it ends, for the
+  same times as above and for whether it is a chat or a `codex exec` script.
+  Codex compresses older logs, and those are not read.
 - `session_index.jsonl`: thread names. `config.toml`: only the project paths.
   `logs_2.sqlite`: opened read-only, for the process id of each session.
 - `auth.json` and `history.jsonl` are explicitly refused.
@@ -72,7 +81,10 @@ place (`src/server/parse/redact.ts`) with a length cap on every string:
   its target;
 - for each tool call: the tool's name and target, as above; for a shell
   command, only its first word;
-- usage: token counts, and your quota windows when they are known.
+- usage: token counts, and your quota windows when they are known;
+- a project's work, only when you open its card or the card of one of its
+  sessions: tokens, how long the agents
+  worked and how long you did, in total and month by month. Numbers only.
 
 Flags to show less:
 
@@ -85,6 +97,32 @@ Flags to show less:
 | `--no-cmd-names` | The first word of shell commands |
 | `--exclude <text>` | Projects whose path contains the text: not listed, not followed |
 
+## A project's hours
+
+A tower's card, and the card of a session working there, show what the
+project took: tokens, the hours the agents worked, and your own, month by
+month. They are measures, not a timesheet:
+
+- **The agents' time** is each turn as the tool times it: Claude Code's turn
+  duration, Codex's. A turn that records none (`claude -p`, the CEOs'
+  workers, or a turn killed halfway) runs from its start to the last thing it
+  did. Sessions add up: two sessions working through the same hour are two
+  hours.
+- **Your time** is an estimate, and a floor: for each message you type into a
+  session, the time since that session last did anything, up to ten minutes.
+  Watching an agent work is not counted, nor is the first message of a
+  session, nor anything a script sends. A stretch in which you had several
+  projects going is split among them, so the same minute is never counted in
+  two projects.
+- They exist only for sessions Towerglow has on record, and only where the
+  transcript could still be read. A transcript the tool has deleted (Claude
+  Code keeps 30 days by default), a compressed Codex log, or a month folded
+  before Towerglow counted hours leave their tokens without hours, and the
+  card marks those months with "≥" or "—". A session that ended while
+  Towerglow was not running and left no closing tally (Codex never leaves
+  one) is not on record at all, and neither is anything older than the 30
+  days Towerglow looks back when it starts.
+
 ## What it stores
 
 Everything goes in `~/.towerglow` (or `--state-dir`). Folders are created
@@ -95,7 +133,7 @@ readable only by you (`0700`), files likewise (`0600`).
 | `token` | The access token of the page |
 | `layout.json` | Which plot of the city each project has |
 | `prefs.json` | Names you gave projects, and the ones you hid |
-| `history.json` | One row of numbers per finished session (ids, tokens, durations, cost; no text). Rows are kept 30 days, then folded into monthly totals kept 12 months |
+| `history.json` | One row of numbers per finished session (ids, tokens, durations, cost; no text), and its hours: how long the agents worked, and when you were at it, as the start and end of each stretch counted as your time (from when the session last did something to when you sent your next message). Rows are kept 30 days, then folded into monthly totals kept 12 months, which keep the hours and drop the times |
 | `statusline/` | Only if you installed the status line bridge: see below |
 
 It never writes into your transcripts, the session registry or the Codex

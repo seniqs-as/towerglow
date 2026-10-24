@@ -1,0 +1,154 @@
+import { OPERATOR_CAP_MS } from '../../shared/protocol.ts';
+
+/**
+ * How long the agents worked for a session, and how long you did.
+ *
+ * Asked for to show funders what a project took (the user's request,
+ * 2026-10-24): the tokens, the hours the AI spent, and the hours of the
+ * person at the keyboard. Only instants go in, never text.
+ *
+ * AI TIME is the tool's own measure of each turn: Claude Code's
+ * `turn_duration`, Codex's `task_complete.duration_ms`. Measured on
+ * 2026-10-24 over the transcripts of three projects: it equals the span from
+ * the prompt to the end of the turn to the second, except in turns that
+ * waited, where it is shorter. A turn that ends without one -- `claude -p`
+ * never writes it, so every worker of a plan, or a turn killed halfway --
+ * counts from its start to the last thing it did. Sessions add up: two
+ * working for the same hour are two hours of AI.
+ *
+ * YOUR TIME is an estimate, and a floor: for every message you send, the
+ * time since the session last did anything, up to `OPERATOR_CAP_MS` --
+ * reading its answer and writing yours. Watching it work is not counted, nor
+ * is the first message of a session, which nothing measures. Over the 30 days
+ * on disk the cap moved the total from 37 hours (5 minutes) to 69 (15): it is
+ * a choice, and the card names it.
+ */
+
+export interface WorkTotals {
+  /** The agents' turns, in ms. */
+  aiMs: number;
+  /**
+   * When you were at it, as flat `[start, end, start, end, ...]` in ms.
+   *
+   * Spans and not a total: you have one pair of hands, and a minute in which
+   * two projects were waiting on you is shared between them (`shareOperator`),
+   * which only the instants make possible. Measured on the same 30 days:
+   * summed per session your time came to 54.7 hours, shared it is 51.1.
+   */
+  operator: number[];
+}
+
+export class WorkMeter {
+  #ai = 0;
+  #operator: number[] = [];
+  /** The start of a turn whose end has not been read yet. */
+  #open: number | null = null;
+  /** The last thing the session did. */
+  #last = 0;
+
+  /**
+   * A message arrived: yours (`human`), or a script's -- a worker's
+   * briefing, an answer resumed by the plan. `queued` was typed while a turn
+   * was running: it joins that turn instead of starting one.
+   */
+  prompt(at: number, human: boolean, queued = false): void {
+    if (human && this.#last > 0 && at > this.#last) {
+      const from = Math.max(this.#last, at - OPERATOR_CAP_MS);
+      this.#operator.push(from, at);
+    }
+    // A new turn while one is open: the open one ended without saying so.
+    if (this.#open !== null && !queued) this.#closeAtLast();
+    if (this.#open === null) this.#open = at;
+    this.#touch(at);
+  }
+
+  /** The end of a turn, with the tool's own measure of it when there is one. */
+  turnEnd(at: number, durationMs: number): void {
+    if (durationMs > 0) this.#ai += durationMs;
+    else if (this.#open !== null) this.#ai += Math.max(0, at - this.#open);
+    this.#open = null;
+    this.#touch(at);
+  }
+
+  /** A turn stopped by you (Codex's `turn_aborted`): it ran until now. */
+  abort(at: number): void {
+    if (this.#open !== null) this.#ai += Math.max(0, at - this.#open);
+    this.#open = null;
+    this.#touch(at);
+  }
+
+  /** Anything else the session did: a reply, a tool's result. */
+  activity(at: number): void {
+    this.#touch(at);
+  }
+
+  /** So far: a turn still open counts up to the last thing it did. */
+  totals(): WorkTotals {
+    const open = this.#open !== null ? Math.max(0, this.#last - this.#open) : 0;
+    return { aiMs: this.#ai + open, operator: [...this.#operator] };
+  }
+
+  #closeAtLast(): void {
+    if (this.#open !== null) this.#ai += Math.max(0, this.#last - this.#open);
+    this.#open = null;
+  }
+
+  #touch(at: number): void {
+    if (at > this.#last) this.#last = at;
+  }
+}
+
+/** Whose spans these are: a session, on a project. */
+export interface SpanOwner {
+  id: string;
+  projectId: string;
+  spans: readonly number[];
+}
+
+/**
+ * Each session's share of your time.
+ *
+ * A stretch in which you were at two projects counts half in each: you
+ * cannot be in two places at once, and a funder of one project should not pay
+ * for the minutes of another. Two sessions on the SAME project share it
+ * between them, and the project gets the stretch once.
+ */
+export function shareOperator(owners: readonly SpanOwner[]): Map<string, number> {
+  const out = new Map<string, number>();
+  // [instant, +1 opens / -1 closes, owner]. At the same instant closes come
+  // first: two spans that touch do not overlap.
+  const events: [number, number, number][] = [];
+  owners.forEach((o, i) => {
+    out.set(o.id, 0);
+    for (let k = 0; k + 1 < o.spans.length; k += 2) {
+      const a = o.spans[k]!;
+      const b = o.spans[k + 1]!;
+      if (b > a) events.push([a, 1, i], [b, -1, i]);
+    }
+  });
+  events.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+
+  const active = new Map<number, number>();
+  let prev = 0;
+  for (const [at, step, i] of events) {
+    if (active.size > 0 && at > prev) {
+      const len = at - prev;
+      const perProject = new Map<string, number[]>();
+      for (const j of active.keys()) {
+        const p = owners[j]!.projectId;
+        const list = perProject.get(p);
+        if (list) list.push(j);
+        else perProject.set(p, [j]);
+      }
+      for (const list of perProject.values()) {
+        const each = len / perProject.size / list.length;
+        for (const j of list) out.set(owners[j]!.id, (out.get(owners[j]!.id) ?? 0) + each);
+      }
+    }
+    const n = (active.get(i) ?? 0) + step;
+    if (n > 0) active.set(i, n);
+    else active.delete(i);
+    prev = at;
+  }
+  return out;
+}

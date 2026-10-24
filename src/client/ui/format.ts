@@ -1,5 +1,5 @@
-import { MAX_SCANNED_DEPTH, MAX_SCANNED_FILES } from '../../shared/protocol.ts';
-import type { ProjectInfo, SessionInfo } from '../../shared/protocol.ts';
+import { MAX_SCANNED_DEPTH, MAX_SCANNED_FILES, OPERATOR_CAP_MS } from '../../shared/protocol.ts';
+import type { ProjectInfo, ProjectWork, SessionInfo, TokenTotals, WorkMonth } from '../../shared/protocol.ts';
 import { floorsForSize, levelsForSize } from '../../shared/layout.ts';
 
 /**
@@ -155,4 +155,88 @@ export const SIZE_NOTE =
 function approxCount(n: number, cut: boolean): string {
   const shown = n.toLocaleString('en-US');
   return cut ? `${shown}+` : `\u2248 ${shown}`;
+}
+
+/**
+ * A project's work on its card: what it took, to show whoever funds it (the
+ * user's request, 2026-10-24). The totals first, then month by month, then
+ * what the hours are counted from -- they are measures of different
+ * solidity, and a funder reading them deserves to know which is which.
+ */
+export interface WorkView {
+  rows: [string, string][];
+  /** Month, tokens, AI time, your time: newest first. */
+  months: [string, string, string, string][];
+}
+
+export function workView(work: ProjectWork): WorkView {
+  const total: WorkMonth = {
+    month: '', sessions: 0, timed: 0,
+    tokens: { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, thinking: 0 },
+    aiMs: 0, operatorMs: 0,
+  };
+  for (const m of work.months) {
+    total.sessions += m.sessions;
+    total.timed += m.timed;
+    total.tokens.in += m.tokens.in;
+    total.tokens.out += m.tokens.out;
+    total.tokens.cacheRead += m.tokens.cacheRead;
+    total.tokens.cacheWrite += m.tokens.cacheWrite;
+    total.aiMs += m.aiMs;
+    total.operatorMs += m.operatorMs;
+  }
+  const t = total.tokens;
+  const sessions = work.live > 0 ? `${total.sessions} \u00b7 ${work.live} open` : String(total.sessions);
+  return {
+    rows: [
+      ['tokens', countText(tokensOf(t))],
+      ['input \u00b7 output', `${countText(t.in)} \u00b7 ${countText(t.out)}`],
+      ['cache read \u00b7 write', `${countText(t.cacheRead)} \u00b7 ${countText(t.cacheWrite)}`],
+      ['AI time', hoursText(total.aiMs, total)],
+      ['your time', hoursText(total.operatorMs, total)],
+      ['sessions', sessions],
+    ],
+    months: work.months.map((m) => [
+      monthLabel(m.month), countText(tokensOf(m.tokens)), hoursText(m.aiMs, m), hoursText(m.operatorMs, m),
+    ]),
+  };
+}
+
+/** What the hours are counted from, and why some read "at least". */
+export const WORK_NOTE =
+  'AI time: the agents\' turns as Claude Code and Codex time them, summed across sessions. ' +
+  `Your time: for each message you send, the time since the session last did anything, up to ${OPERATOR_CAP_MS / 60_000} minutes; ` +
+  'a stretch with several projects going is split among them. ' +
+  '\u2265 and \u2014: some or all of the sessions could not be read, and their hours are missing. ' +
+  'Months follow the day a session began; a year at most is kept.';
+
+/** Cache reads are most of it, and they are tokens: the total says so by including them. */
+function tokensOf(t: TokenTotals): number {
+  return t.in + t.out + t.cacheRead + t.cacheWrite;
+}
+
+/**
+ * Hours, as a funder counts them. Over sessions none of which were read, a
+ * dash: zero would claim a measure nobody made.
+ */
+function hoursText(ms: number, of: Pick<WorkMonth, 'sessions' | 'timed'>): string {
+  if (of.timed === 0) return of.sessions === 0 ? '0 h' : '\u2014';
+  const shown = ms < 3_600_000 ? `${Math.round(ms / 60_000)} min` : `${(ms / 3_600_000).toFixed(1)} h`;
+  return of.timed < of.sessions ? `\u2265 ${shown}` : shown;
+}
+
+function countText(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  return `${(n / 1_000_000_000).toFixed(2)}B`;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** `2026-10` as `Oct 2026`: the key is a month, not a date to localise. */
+function monthLabel(key: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(key);
+  const name = m ? MONTHS[Number(m[2]) - 1] : undefined;
+  return m && name ? `${name} ${m[1]}` : key;
 }

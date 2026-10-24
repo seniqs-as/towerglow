@@ -200,7 +200,13 @@ settings button holds the tower spacing, the quality presets, the planet and
 the sky. A red cross on a session's badge means it stopped at its usage limit
 and is waiting for you: a session refused at the limit is not started again
 when the limit resets. The cross stays until the session goes on, and its
-hover says when the limit resets. On macOS, clicking a session brings its
+hover says when the limit resets. The info button on a tower's name, or on
+the badge of a session working there, opens its card: how tall the tower is
+and what that counts, and what the project took, in total and month by
+month: the tokens, the hours the agents worked and your own, estimated from
+when you send messages and never counted in two projects at once. How the
+hours are counted, and what they miss, is in
+[PRIVACY.md](PRIVACY.md#a-projects-hours). On macOS, clicking a session brings its
 terminal window to the front; a worker of the CEOs has no window of its own,
 so the click opens one that follows what it is doing, read-only.
 

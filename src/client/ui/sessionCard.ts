@@ -1,8 +1,10 @@
-import type { ProjectInfo, SessionInfo } from '../../shared/protocol.ts';
+import type { ProjectInfo, ProjectWork, SessionInfo } from '../../shared/protocol.ts';
 import type { Step } from '../state/trail.ts';
 import { PENDING_MAX_MS } from '../state/pendingFocus.ts';
 import { TOOL_COLOR } from '../world/palette.ts';
-import { describeActivity, describeStep, formatElapsed, limitStopText, SIZE_NOTE, sizeRows } from './format.ts';
+import {
+  describeActivity, describeStep, formatElapsed, limitStopText, SIZE_NOTE, sizeRows, WORK_NOTE, workView,
+} from './format.ts';
 import type { SizeView } from './format.ts';
 
 export interface CardContext {
@@ -19,6 +21,13 @@ export interface CardContext {
   trail: readonly Step[];
   /** The view on screen: the project's height is told in its floors or its decks. */
   view: SizeView;
+  /**
+   * The project's work, as for its own card: `undefined` while it counts,
+   * `null` when the server knows no such project. A tower somebody works on
+   * has no info button on its name -- the badge has it, and opens this card --
+   * so without it the busiest projects would be the ones whose hours are nowhere.
+   */
+  work: ProjectWork | null | undefined;
 }
 
 /**
@@ -210,6 +219,8 @@ export class SessionCard {
     }
     body.appendChild(dl);
     if (ctx.trail.length > 0) body.appendChild(trailBlock(ctx.trail));
+    // Last: it is the project's, not the session's.
+    if (ctx.work !== null) body.appendChild(workBlock(ctx.work, 'project work on record'));
 
     this.#root.replaceChildren(head, body);
   }
@@ -219,8 +230,11 @@ export class SessionCard {
    * from. The badge's info button opens a session's card, and a project with
    * no session has no badge: its nameplate's info button opens this, in the
    * same place, so the numbers of any tower are one click away.
+   *
+   * `work` is what the server answered for it: `undefined` while it counts,
+   * `null` when it knows no such project.
    */
-  showProject(project: ProjectInfo, view: SizeView): void {
+  showProject(project: ProjectInfo, view: SizeView, work: ProjectWork | null | undefined): void {
     this.#id = null;
     this.#jump = null;
     this.#projectId = project.id;
@@ -248,8 +262,52 @@ export class SessionCard {
       dl.appendChild(row);
     }
     body.append(dl, el('p', 'card__note', SIZE_NOTE));
+    if (work !== null) body.appendChild(workBlock(work, 'work on record'));
     this.#root.replaceChildren(head, body);
   }
+}
+
+/**
+ * What the project took: tokens, the agents' hours and yours (the user's
+ * request, 2026-10-24, to show its funders). Below the size, set apart like
+ * the trail: the same card carrying on.
+ */
+function workBlock(work: ProjectWork | undefined, title: string): HTMLElement {
+  const box = el('div', 'card__work');
+  box.appendChild(el('p', 'card__trail-title', title));
+  if (work === undefined) {
+    box.appendChild(el('p', 'card__note', 'Counting\u2026'));
+    return box;
+  }
+  if (work.months.length === 0) {
+    box.appendChild(el('p', 'card__note', 'No session on record yet.'));
+    return box;
+  }
+  const view = workView(work);
+  const dl = el('dl', 'card__rows');
+  for (const [k, v] of view.rows) {
+    const row = el('div', '');
+    row.appendChild(el('dt', '', k));
+    row.appendChild(el('dd', '', v));
+    dl.appendChild(row);
+  }
+  box.appendChild(dl);
+
+  const table = el('table', '');
+  const headRow = el('tr', '');
+  for (const h of ['month', 'tokens', 'AI', 'you']) headRow.appendChild(el('th', '', h));
+  table.appendChild(el('thead', '')).appendChild(headRow);
+  const rows = el('tbody', '');
+  for (const cells of view.months) {
+    const tr = el('tr', '');
+    for (const c of cells) tr.appendChild(el('td', '', c));
+    rows.appendChild(tr);
+  }
+  table.appendChild(rows);
+  const scroll = el('div', 'card__months');
+  scroll.appendChild(table);
+  box.append(scroll, el('p', 'card__note', WORK_NOTE));
+  return box;
 }
 
 /**

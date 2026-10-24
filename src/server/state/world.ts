@@ -773,6 +773,11 @@ export class World {
     return this.#sessions.get(id);
   }
 
+  /** The sessions open now, without building a snapshot: a card's hours need them all. */
+  liveSessions(): SessionInfo[] {
+    return [...this.#sessions.values()];
+  }
+
   /**
    * Takes note of what a session is doing, how long the last turn lasted and
    * how much it consumed, WITHOUT emitting anything.

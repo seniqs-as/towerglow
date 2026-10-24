@@ -28,7 +28,7 @@ import { Store } from './state/store.ts';
 import { Lights } from './state/lights.ts';
 import type { Light } from './state/lights.ts';
 import type {
-  ProjectInfo, ProviderId, SessionInfo, TokenTotals,
+  ProjectInfo, ProjectWork, ProviderId, SessionInfo, TokenTotals,
 } from '../shared/protocol.ts';
 import { Labels, projectPlateText } from './ui/labels.ts';
 import { ProjectMenu } from './ui/projectMenu.ts';
@@ -328,7 +328,7 @@ canvas.addEventListener('pointerup', (e) => {
     return;
   }
   if (card.openFor === hit) card.close();
-  else showCard(hit);
+  else openSessionCard(hit);
 });
 
 /** The pointer in normalised device coordinates, plus the aspect the picker needs. */
@@ -380,7 +380,10 @@ window.addEventListener('pointerup', () => {
 const projectMenu = new ProjectMenu(document.getElementById('badges')!, {
   onInfo: (projectId) => {
     if (card.openProject === projectId) card.close();
-    else showProjectCard(projectId);
+    else {
+      askWork(projectId);
+      showProjectCard(projectId);
+    }
   },
   onRename: (projectId, name) => socket?.send({ t: 'project.alias', projectId, name }),
   onHide: (projectId) => socket?.send({ t: 'project.disabled', projectId, disabled: true }),
@@ -737,7 +740,7 @@ const card = new SessionCard(document.getElementById('card')!, (id) => jumpToTer
 const badges = new Badges(document.getElementById('badges')!, stage.camera, {
   onSelect: (id) => {
     if (card.openFor === id) card.close();
-    else showCard(id);
+    else openSessionCard(id);
   },
   onFocus: (id) => jumpToTerminal(id),
   onZoom: (projectId) => zoomToProject(projectId),
@@ -1647,7 +1650,28 @@ function showCard(sessionId: string): void {
     what: whatOf(session),
     trail: store.trail.of(sessionId),
     view: worldView,
+    work: workOf.get(session.projectId),
   });
+}
+
+/** Each project's work as the server last answered for its card: pulled, never pushed. */
+const workOf = new Map<string, ProjectWork | null>();
+
+/**
+ * Asked anew at every opening of a card, never while it stays open:
+ * sessions close in between, and the redraws on every event would read the
+ * transcripts again for nothing. The last answer stays on screen until the
+ * new one arrives.
+ */
+function askWork(projectId: string): void {
+  socket?.send({ t: 'project.work', projectId });
+}
+
+/** A session's card, with its project's work asked for. */
+function openSessionCard(sessionId: string): void {
+  const session = store.sessions.get(sessionId);
+  if (session) askWork(session.projectId);
+  showCard(sessionId);
 }
 
 /** A project's details, for one with no session and so no badge to open them from. */
@@ -1658,7 +1682,7 @@ function showProjectCard(projectId: string): void {
     card.close();
     return;
   }
-  card.showProject(project, worldView);
+  card.showProject(project, worldView, workOf.get(projectId));
 }
 
 
@@ -1862,6 +1886,12 @@ if (!token) {
       }
       if (frame.t === 'terminal.result') {
         labels.flash(`p:${frame.projectId}`, frame.ok, frame.reason);
+        return;
+      }
+      if (frame.t === 'work.result') {
+        workOf.set(frame.projectId, frame.work);
+        if (card.openProject === frame.projectId) showProjectCard(frame.projectId);
+        else if (card.openFor && store.sessions.get(card.openFor)?.projectId === frame.projectId) showCard(card.openFor);
         return;
       }
       if (frame.t === 'reveal.result') {

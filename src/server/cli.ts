@@ -21,6 +21,8 @@ import { createPlacementStore } from './state/placement.ts';
 import { createPrefs } from './state/prefs.ts';
 import { createHistory, HISTORY_ROW_DAYS } from './state/history.ts';
 import { readClosedCosts } from './sources/costSeed.ts';
+import { WorkScanner } from './sources/workScan.ts';
+import type { WorkSource } from './sources/workScan.ts';
 import { projectIdFor } from './state/ids.ts';
 import { clipPlanFrame, isPlanFrame } from './ceoPort.ts';
 import type { CeoDesk, CeoModule } from './ceoPort.ts';
@@ -39,7 +41,7 @@ import {
 import type { ProjectMeasure } from './sources/projectsSource.ts';
 import type { PathPolicy } from './paths.ts';
 import { PROTOCOL_VERSION } from '../shared/protocol.ts';
-import type { DeltaEvent, ProviderId } from '../shared/protocol.ts';
+import type { DeltaEvent, ProjectWork, ProviderId } from '../shared/protocol.ts';
 
 const VERSION = '0.1.0';
 
@@ -204,6 +206,50 @@ async function start(cfg: Config): Promise<number> {
    * only at whoever is still running.
    */
   const history = createHistory(cfg.stateDir);
+  /*
+   * How long the AI worked on each session, and how long you did: read
+   * from the whole transcript once the session is over, into its row (see
+   * `sources/workScan.ts`). The folder comes from the model, never from
+   * the row or the client.
+   */
+  const workScanner = new WorkScanner({ policy });
+  const workSource = (s: { id: string; provider: ProviderId; projectId: string; startedAt: number }): WorkSource | null => {
+    const cwd = world.cwdOf(s.projectId);
+    return cwd ? { provider: s.provider, sessionId: s.id, cwd, startedAt: s.startedAt } : null;
+  };
+  /** Reads a finished session's hours into its row. `false` when there was nothing to read. */
+  const timeClosed = async (
+    s: { id: string; provider: ProviderId; projectId: string; startedAt: number },
+    urgent = false,
+  ): Promise<boolean> => {
+    const src = workSource(s);
+    const work = src ? await workScanner.finish(src, urgent) : null;
+    if (!work || !history.has(s.id)) return false;
+    history.merge(s.id, { work });
+    return true;
+  };
+
+  /**
+   * A project's work, for its card: its rows not read yet go first, then
+   * every open session is read up to now -- every one, not only this
+   * project's: your time is shared out over all of them.
+   */
+  const projectWork = async (projectId: string): Promise<ProjectWork> => {
+    const rows = history.untimed().filter((r) => r.projectId === projectId);
+    if ((await Promise.all(rows.map((r) => timeClosed(r, true)))).some(Boolean)) history.save();
+    const open = world.liveSessions();
+    const live = await Promise.all(open.map(async (s) => {
+      const src = workSource(s);
+      return {
+        id: s.id, projectId: s.projectId, startedAt: s.startedAt, tokens: s.tokens,
+        work: src ? await workScanner.measure(src, true) : null,
+      };
+    }));
+    return {
+      months: history.workOf(projectId, live),
+      live: open.filter((s) => s.projectId === projectId).length,
+    };
+  };
 
   const world = new World({
     homeDir: cfg.homeDir,
@@ -242,7 +288,17 @@ async function start(cfg: Config): Promise<number> {
      * If the tool's final tally arrives later, the row gets promoted.
      */
     onSessionClosed: (session) => {
-      if (history.has(session.id)) return;
+      // Its hours whether or not it already had a row: a resumed session
+      // has worked since the row was written.
+      const timeIt = (): void => {
+        void timeClosed(session).then((ok) => {
+          if (ok) history.save();
+        });
+      };
+      if (history.has(session.id)) {
+        timeIt();
+        return;
+      }
       history.record({
         id: session.id,
         projectId: session.projectId,
@@ -262,6 +318,7 @@ async function start(cfg: Config): Promise<number> {
         linesRemoved: 0,
       });
       history.save();
+      timeIt();
     },
   });
 
@@ -564,6 +621,17 @@ async function start(cfg: Config): Promise<number> {
         );
         return;
       }
+      if (frame.t === 'project.work') {
+        // Numbers only, read from the model and the history: the id is the
+        // one thing that comes from the client.
+        const projectId = String(frame.projectId);
+        if (!world.cwdOf(projectId)) {
+          reply({ t: 'work.result', projectId, work: null });
+          return;
+        }
+        void projectWork(projectId).then((work) => reply({ t: 'work.result', projectId, work }));
+        return;
+      }
       if (frame.t === 'project.terminal') {
         const fail = (reason: string): void => {
           reply({ t: 'terminal.result', projectId: frame.projectId, ok: false, reason });
@@ -822,6 +890,20 @@ async function start(cfg: Config): Promise<number> {
     history.save();
     if (!cfg.quiet) process.stdout.write(`  history:   ${seeded} closed sessions recovered\n`);
   }
+
+  /*
+   * The hours of the rows on record that have none yet: the ones written
+   * before hours existed, and the ones just recovered. In the background,
+   * one transcript at a time: the server is already answering. A transcript
+   * Claude Code has deleted leaves its row without hours, and the card says
+   * so; it is looked for again at the next start, which costs a stat.
+   */
+  void Promise.all(history.untimed().map((row) => timeClosed(row))).then((done) => {
+    const n = done.filter(Boolean).length;
+    if (n === 0) return;
+    history.save();
+    if (!cfg.quiet) process.stdout.write(`  history:   hours read for ${n} closed sessions\n`);
+  });
 
   const transcripts = new TranscriptSource({
     claudeDir: cfg.claudeDir,

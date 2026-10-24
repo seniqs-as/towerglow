@@ -1,6 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { ProviderId, StatusConfidence, TokenTotals } from '../../shared/protocol.ts';
+import type { ProviderId, StatusConfidence, TokenTotals, WorkMonth } from '../../shared/protocol.ts';
+import { shareOperator } from './workMeter.ts';
+import type { WorkTotals } from './workMeter.ts';
 
 /**
  * What finished sessions leave behind, kept small on purpose.
@@ -97,6 +99,14 @@ export interface ClosedSession {
   wallMs: number;
   linesAdded: number;
   linesRemoved: number;
+  /**
+   * How long the AI worked and when you did, read from the transcript.
+   *
+   * Absent until it has been read, and on rows written before it existed:
+   * a transcript Claude Code has since deleted can no longer give it, and
+   * the card says the hours are a floor instead of reading zero.
+   */
+  work?: WorkTotals;
 }
 
 export interface PeriodTotals {
@@ -113,6 +123,12 @@ export interface PeriodTotals {
   reported: number;
   /** How many we watched work: turns and calls only count for those. */
   watched: number;
+  /** The agents' turns, for the sessions whose time was read. */
+  aiMs: number;
+  /** Your time, already shared with the other projects you had going. */
+  operatorMs: number;
+  /** How many had their time read: the hours count only those. */
+  timed: number;
 }
 
 export interface ProjectHistory {
@@ -157,6 +173,16 @@ export interface History {
    */
   between(projectId: string, from: number, to: number): ClosedSession[];
   /**
+   * A project's work month by month, newest first: what its tower's card shows.
+   *
+   * `live` are the sessions still open, measured so far, of EVERY project:
+   * your time with them overlaps your time with the others, and the share
+   * is decided over all of them. One with a row (a resumed session) replaces it.
+   */
+  workOf(projectId: string, live: readonly LiveWork[]): WorkMonth[];
+  /** Rows whose time has not been read yet: what the startup pass reads. */
+  untimed(): ClosedSession[];
+  /**
    * The weighted tokens burned by one tool over a time window.
    *
    * It is the DENOMINATOR that converts a call into a percentage of quota:
@@ -172,6 +198,15 @@ export interface History {
   weightedSince(provider: ProviderId, since: number, now: number): number;
   rows(): number;
   save(): void;
+}
+
+/** A session still open, as far as it has been measured. */
+export interface LiveWork {
+  id: string;
+  projectId: string;
+  startedAt: number;
+  tokens: TokenTotals;
+  work: WorkTotals | null;
 }
 
 interface Fold {
@@ -193,11 +228,12 @@ function zero(): PeriodTotals {
     sessions: 0, turns: 0, toolCalls: 0,
     tokens: { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, thinking: 0 },
     costUsd: 0, apiMs: 0, toolMs: 0, linesAdded: 0, linesRemoved: 0,
-    reported: 0, watched: 0,
+    reported: 0, watched: 0, aiMs: 0, operatorMs: 0, timed: 0,
   };
 }
 
-function add(into: PeriodTotals, row: ClosedSession): void {
+/** `operatorMs` is the row's SHARE of your time, decided over every row at once. */
+function add(into: PeriodTotals, row: ClosedSession, operatorMs: number): void {
   into.sessions += 1;
   into.turns += row.turns;
   into.toolCalls += row.toolCalls;
@@ -213,6 +249,24 @@ function add(into: PeriodTotals, row: ClosedSession): void {
   into.linesRemoved += row.linesRemoved;
   if (row.confidence === 'reported') into.reported += 1;
   if (row.watched) into.watched += 1;
+  if (row.work) {
+    into.aiMs += row.work.aiMs;
+    into.operatorMs += operatorMs;
+    into.timed += 1;
+  }
+}
+
+/** Each row's share of your time: see `shareOperator`. */
+function sharesOf(rows: Iterable<{ id: string; projectId: string; work?: WorkTotals | null }>): Map<string, number> {
+  const owners = [];
+  for (const r of rows) if (r.work) owners.push({ id: r.id, projectId: r.projectId, spans: r.work.operator });
+  return shareOperator(owners);
+}
+
+function isWork(v: unknown): v is WorkTotals {
+  const w = v as WorkTotals | null;
+  return !!w && typeof w.aiMs === 'number' && Number.isFinite(w.aiMs)
+    && Array.isArray(w.operator) && w.operator.every((n) => typeof n === 'number' && Number.isFinite(n));
 }
 
 function monthOf(at: number): string {
@@ -236,9 +290,17 @@ export function createHistory(stateDir: string): History {
   try {
     const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as HistoryFile;
     if (raw && raw.version === VERSION) {
-      for (const row of raw.sessions ?? []) if (isRow(row)) sessions.set(row.id, row);
+      for (const row of raw.sessions ?? []) {
+        if (!isRow(row)) continue;
+        // A malformed one is dropped, not trusted: the row is read again.
+        if (row.work !== undefined && !isWork(row.work)) delete row.work;
+        sessions.set(row.id, row);
+      }
       for (const f of raw.folds ?? []) {
         if (f && typeof f.month === 'string' && f.totals) {
+          // Months folded before the hours existed have none: zero hours
+          // over zero timed sessions, which the card reads as unknown.
+          f.totals = { ...zero(), ...f.totals };
           folds.set(`${f.projectId}|${f.provider}|${f.month}`, f);
         }
       }
@@ -270,6 +332,9 @@ export function createHistory(stateDir: string): History {
     }
     if (old.length === 0) return;
 
+    // Decided over EVERY row, the ones staying included: a folded session
+    // shared its minutes with ones that are not folded yet.
+    const shares = sharesOf(sessions.values());
     for (const row of old) {
       const month = monthOf(row.startedAt);
       const key = `${row.projectId}|${row.provider}|${month}`;
@@ -278,7 +343,7 @@ export function createHistory(stateDir: string): History {
         f = { projectId: row.projectId, provider: row.provider, month, totals: zero() };
         folds.set(key, f);
       }
-      add(f.totals, row);
+      add(f.totals, row, shares.get(row.id) ?? 0);
       sessions.delete(row.id);
     }
 
@@ -317,6 +382,7 @@ export function createHistory(stateDir: string): History {
     digest(now, days) {
       const span = days * DAY_MS;
       const byProject = new Map<string, ProjectHistory>();
+      const shares = sharesOf(sessions.values());
 
       for (const r of sessions.values()) {
         const age = now - r.startedAt;
@@ -326,7 +392,7 @@ export function createHistory(stateDir: string): History {
           p = { projectId: r.projectId, providers: [], now: zero(), before: zero() };
           byProject.set(r.projectId, p);
         }
-        add(age < span ? p.now : p.before, r);
+        add(age < span ? p.now : p.before, r, shares.get(r.id) ?? 0);
         if (!p.providers.includes(r.provider)) p.providers.push(r.provider);
       }
 
@@ -348,10 +414,67 @@ export function createHistory(stateDir: string): History {
         // Copies: the reader computes medians, and must not be able to rewrite
         // history from under whoever holds it. `tokens` separately, or it
         // would be shared.
-        out.push({ ...r, tokens: { ...r.tokens } });
+        out.push({
+          ...r,
+          tokens: { ...r.tokens },
+          ...(r.work ? { work: { aiMs: r.work.aiMs, operator: [...r.work.operator] } } : {}),
+        });
       }
       return out.sort((a, b) => a.startedAt - b.startedAt);
     },
+
+    workOf(projectId, live) {
+      const liveIds = new Set(live.map((l) => l.id));
+      const rows = [...sessions.values()].filter((r) => !liveIds.has(r.id));
+      const shares = sharesOf([...rows, ...live]);
+      const months = new Map<string, WorkMonth>();
+      const monthFor = (key: string): WorkMonth => {
+        let m = months.get(key);
+        if (!m) {
+          m = {
+            month: key, sessions: 0, timed: 0,
+            tokens: { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, thinking: 0 },
+            aiMs: 0, operatorMs: 0,
+          };
+          months.set(key, m);
+        }
+        return m;
+      };
+      const addTokens = (m: WorkMonth, t: TokenTotals): void => {
+        m.tokens.in += t.in;
+        m.tokens.out += t.out;
+        m.tokens.cacheRead += t.cacheRead;
+        m.tokens.cacheWrite += t.cacheWrite;
+        m.tokens.thinking += t.thinking;
+      };
+
+      for (const f of folds.values()) {
+        if (f.projectId !== projectId) continue;
+        const m = monthFor(f.month);
+        m.sessions += f.totals.sessions;
+        m.timed += f.totals.timed;
+        addTokens(m, f.totals.tokens);
+        m.aiMs += f.totals.aiMs;
+        m.operatorMs += f.totals.operatorMs;
+      }
+      const one = (r: { id: string; projectId: string; startedAt: number; tokens: TokenTotals; work?: WorkTotals | null }): void => {
+        if (r.projectId !== projectId) return;
+        const m = monthFor(monthOf(r.startedAt));
+        m.sessions += 1;
+        addTokens(m, r.tokens);
+        if (r.work) {
+          m.timed += 1;
+          m.aiMs += r.work.aiMs;
+          m.operatorMs += shares.get(r.id) ?? 0;
+        }
+      };
+      for (const r of rows) one(r);
+      for (const l of live) one(l);
+
+      return [...months.values()].sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
+    },
+
+    untimed: () => [...sessions.values()].filter((r) => !r.work).map((r) => ({ ...r, tokens: { ...r.tokens } })),
 
     weightedSince(provider, since, now) {
       let total = 0;
