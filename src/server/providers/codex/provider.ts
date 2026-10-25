@@ -484,7 +484,9 @@ export class CodexProvider implements Provider {
    * pid per run of the app, shared by every chat it serves and gone when the
    * app quits, so a dead pid is a closed chat. A pid recycled by another
    * process reads alive, and the window decides as before. A chat stopped at
-   * the usage limit leaves too, as a Claude session does with its terminal.
+   * the usage limit is not asked (by decision of the user, 2026-10-25): its
+   * red cross stays until the chat goes on or `LIMIT_HOLD_MS` runs out, app
+   * closed or not, because the stop is still yours to act on.
    *
    * Work dated after the death was first seen comes from a new process the
    * logs do not name yet -- the chat reopened -- and brings it back.
@@ -511,7 +513,7 @@ export class CodexProvider implements Provider {
       // every tick; off stage until it works again, unless it is stopped at
       // the usage limit and waits for you.
       if (now - a.lastActivityMs >= LIVE_WINDOW_MS && !held(a, now)) continue;
-      if (this.#closed(a, now)) continue;
+      if (!held(a, now) && this.#closed(a, now)) continue;
       // Three distinct states, all derivable from the rollout:
       //  - waiting: a question to the user is still unanswered
       //  - busy:    turn open, `task_started` without `task_complete`

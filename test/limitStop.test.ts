@@ -333,9 +333,10 @@ test('a Codex chat stopped hours ago stays on stage, also after a restart of the
   assert.equal(sessions[0]!.limitStoppedAt, at);
 });
 
-test('a Codex chat stopped at the limit leaves with its app, as a Claude session with its terminal', async () => {
-  // Held a day because nothing said whether the chat was still open; the pid
-  // of the app in Codex's logs says it.
+test('a Codex chat stopped at the limit keeps its cross after its app is closed', async () => {
+  // By decision of the user, 2026-10-25: a closed app takes its chats off
+  // the scene at once, but not one stopped at the limit -- that stop is
+  // still for you to act on, and it stays its day like before.
   const at = Date.now() - 5 * 3_600_000;
   const { dir } = codexDir(head(at - 10_000) + refusedTurn('t1', at), 5 * 3_600_000);
   const db = new DatabaseSync(path.join(dir, 'logs_2.sqlite'));
@@ -343,7 +344,8 @@ test('a Codex chat stopped at the limit leaves with its app, as a Claude session
   db.prepare('INSERT INTO logs VALUES (?, ?, ?)').run(CODEX_SID, 'pid:4242:3cae', Math.floor(at / 1000));
   db.close();
   assert.equal((await codexSessions(dir, () => true)).length, 1, 'the app still runs');
-  assert.deepEqual(await codexSessions(dir, () => false), []);
+  const [closed] = await codexSessions(dir, () => false);
+  assert.equal(closed?.limitStoppedAt, at, 'the app was closed and the cross went with it');
 });
 
 test('a Codex chat stopped more than a day ago, or that went on, is not held', async () => {
