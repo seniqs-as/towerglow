@@ -34,8 +34,10 @@ the code that reads sessions.
   beginning when its session ends, and the transcripts of the last 30 days
   that have no hours yet are read once at startup, in the background: of
   each line only its time and its kind (your message, a reply, the end of a
-  turn and how long it took) are kept, and whether the session was started
-  by a script (`claude -p`) rather than typed into.
+  turn and how long it took) are kept, of a reply the model and effort it
+  ran on, and whether the session was started by a script (`claude -p`)
+  rather than typed into. Sessions given hours before Towerglow kept models
+  are read once more, for those.
 - `~/.claude.json`: the list of your projects, and the name of your plan
   (for example "max 5x"), nothing else.
 - Nothing else in `~/.claude` is on the allow-list. Separately, `settings.json`
@@ -51,7 +53,8 @@ the code that reads sessions.
   paths and line counts of file changes, and the **first line of your last
   prompt**, which Codex sessions use as their title. For a project's hours,
   a session's log is read once from the beginning when it ends, for the
-  same times as above and for whether it is a chat or a `codex exec` script.
+  same times as above, the model and effort of each turn, and for whether it
+  is a chat or a `codex exec` script.
   Codex compresses older logs, and those are not read.
 - `session_index.jsonl`: thread names. `config.toml`: only the project paths.
   `logs_2.sqlite`: opened read-only, for the process id of each session:
@@ -86,7 +89,9 @@ place (`src/server/parse/redact.ts`) with a length cap on every string:
 - usage: token counts, and your quota windows when they are known;
 - a project's work, only when you open its card or the card of one of its
   sessions: tokens, how long the agents
-  worked and how long you did, in total and month by month. Numbers only.
+  worked and how long you did, in total and month by month, and how much of
+  the agents' time each model and effort took. Numbers, and the names of
+  the models and efforts.
 
 Flags to show less:
 
@@ -116,6 +121,13 @@ month. They are measures, not a timesheet:
   session, nor anything a script sends. A stretch in which you had several
   projects going is split among them, so the same minute is never counted in
   two projects.
+- **Models and effort** split the agents' time: each turn counts for the
+  model and effort the tool wrote on it (Claude Code on every reply, Codex at
+  the start of every turn), and a turn with no reply for the model the
+  session last ran on, or at its start for the first one it names. Where
+  the tool wrote no effort the card shows the model alone. Hours read
+  before Towerglow kept models, and months folded before then, are shown
+  as "not recorded".
 - They exist only for sessions Towerglow has on record, and only where the
   transcript could still be read. A transcript the tool has deleted (Claude
   Code keeps 30 days by default), a compressed Codex log, or a month folded
@@ -135,7 +147,7 @@ readable only by you (`0700`), files likewise (`0600`).
 | `token` | The access token of the page |
 | `layout.json` | Which plot of the city each project has |
 | `prefs.json` | Names you gave projects, and the ones you hid |
-| `history.json` | One row of numbers per finished session (ids, tokens, durations, cost; no text), and its hours: how long the agents worked, and when you were at it, as the start and end of each stretch counted as your time (from when the session last did something to when you sent your next message). Rows are kept 30 days, then folded into monthly totals kept 12 months, which keep the hours and drop the times |
+| `history.json` | One row of numbers per finished session (ids, tokens, durations, cost; no text), and its hours: how long the agents worked, on which models and efforts, and when you were at it, as the start and end of each stretch counted as your time (from when the session last did something to when you sent your next message). Rows are kept 30 days, then folded into monthly totals kept 12 months, which keep the hours and the models and drop the times |
 | `statusline/` | Only if you installed the status line bridge: see below |
 
 It never writes into your transcripts, the session registry or the Codex

@@ -183,6 +183,35 @@ export interface WorkMonth {
   aiMs: number;
   /** Yours, estimated from when you sent messages, shared with the other projects you had going. */
   operatorMs: number;
+  /**
+   * `aiMs` by the model and effort its turns ran on (the user's request,
+   * 2026-10-25). Summing to less than `aiMs` is a part nobody recorded:
+   * rows timed or months folded before models were read.
+   */
+  models: ModelTime[];
+}
+
+/**
+ * The agents' time on one model at one effort.
+ *
+ * Both as the tool wrote them on the turn: Claude Code's `message.model` and
+ * `effort` on every reply (from 2.1.281 on, all of them on disk on
+ * 2026-10-25), Codex's `turn_context`. `effort` is `null` where the tool
+ * wrote none.
+ */
+export interface ModelTime {
+  model: string;
+  effort: string | null;
+  aiMs: number;
+}
+
+/** Adds `from` into `into`, one entry per model and effort. */
+export function addModelTimes(into: ModelTime[], from: readonly ModelTime[]): void {
+  for (const m of from) {
+    const same = into.find((x) => x.model === m.model && x.effort === m.effort);
+    if (same) same.aiMs += m.aiMs;
+    else into.push({ model: m.model, effort: m.effort, aiMs: m.aiMs });
+  }
 }
 
 /**

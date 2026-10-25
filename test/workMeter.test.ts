@@ -35,6 +35,38 @@ test('a worker\'s turn, which never writes its duration, runs to the last thing 
   assert.equal(m.totals().aiMs, 35 * MIN);
 });
 
+test('a turn still open counts for the model it runs on, and one killed before replying for the last one', () => {
+  // The card reads open sessions: the split must sum to the AI time there too.
+  const m = new WorkMeter();
+  m.prompt(T0, true);
+  m.model('claude-opus-5-5', 'xhigh');
+  m.activity(T0 + 4 * MIN);
+  assert.deepEqual(m.totals().models, [{ model: 'claude-opus-5-5', effort: 'xhigh', aiMs: 4 * MIN }]);
+  m.turnEnd(T0 + 5 * MIN, 5 * MIN);
+  // Stopped before its first reply: nothing named another model.
+  m.prompt(T0 + 8 * MIN, true);
+  m.activity(T0 + 9 * MIN);
+  m.prompt(T0 + 12 * MIN, true);
+  const t = m.totals();
+  assert.equal(t.aiMs, 6 * MIN);
+  assert.deepEqual(t.models, [{ model: 'claude-opus-5-5', effort: 'xhigh', aiMs: 6 * MIN }]);
+});
+
+test('time before the session\'s first reply goes to the first model it names', () => {
+  // Measured on 2026-10-25: a `/clear` and messages queued behind it made
+  // nine minutes of turn before any reply named a model.
+  const m = new WorkMeter();
+  m.prompt(T0, true);
+  m.activity(T0 + 9 * MIN);
+  m.prompt(T0 + 11 * MIN, true);
+  assert.deepEqual(m.totals().models, []);
+  m.model('claude-opus-5-5', 'xhigh');
+  m.turnEnd(T0 + 12 * MIN, MIN);
+  const t = m.totals();
+  assert.equal(t.aiMs, 10 * MIN);
+  assert.deepEqual(t.models, [{ model: 'claude-opus-5-5', effort: 'xhigh', aiMs: 10 * MIN }]);
+});
+
 test('your time is the stretch since the session last did anything, up to the cap', () => {
   const m = new WorkMeter();
   m.prompt(T0, true);

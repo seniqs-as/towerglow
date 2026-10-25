@@ -292,22 +292,27 @@ function workBlock(work: ProjectWork | undefined, title: string): HTMLElement {
     dl.appendChild(row);
   }
   box.appendChild(dl);
+  // Which models did the work, and at what effort: under the AI time it splits.
+  if (view.models.length > 0) box.appendChild(workTable('card__models', ['model \u00b7 effort', 'AI', 'share'], view.models));
+  box.append(workTable('card__months', ['month', 'tokens', 'AI', 'you'], view.months), el('p', 'card__note', WORK_NOTE));
+  return box;
+}
 
+function workTable(cls: string, heads: string[], cells: string[][]): HTMLElement {
   const table = el('table', '');
   const headRow = el('tr', '');
-  for (const h of ['month', 'tokens', 'AI', 'you']) headRow.appendChild(el('th', '', h));
+  for (const h of heads) headRow.appendChild(el('th', '', h));
   table.appendChild(el('thead', '')).appendChild(headRow);
   const rows = el('tbody', '');
-  for (const cells of view.months) {
+  for (const line of cells) {
     const tr = el('tr', '');
-    for (const c of cells) tr.appendChild(el('td', '', c));
+    for (const c of line) tr.appendChild(el('td', '', c));
     rows.appendChild(tr);
   }
   table.appendChild(rows);
-  const scroll = el('div', 'card__months');
+  const scroll = el('div', cls);
   scroll.appendChild(table);
-  box.append(scroll, el('p', 'card__note', WORK_NOTE));
-  return box;
+  return scroll;
 }
 
 /**

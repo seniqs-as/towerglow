@@ -23,6 +23,8 @@ export interface AssistantRecord {
   timestamp: number;
   requestId: string | null;
   model: string | null;
+  /** The effort the reply ran at (`low` ... `max`): written on every reply from 2.1.281 on. */
+  effort: string | null;
   toolUses: ToolUseBlock[];
   usage: unknown;
   thinking: boolean;
@@ -367,6 +369,7 @@ export function parseLine(line: string, stats: ParseStats): Record_ | null {
         timestamp: timeOf(raw),
         requestId: str(raw['requestId']),
         model: str(message['model']),
+        effort: str(raw['effort']),
         toolUses,
         usage: message['usage'],
         thinking,

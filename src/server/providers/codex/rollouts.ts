@@ -66,7 +66,8 @@ export type RolloutEvent =
   /** The conversation was compacted: only when. */
   | { kind: 'compacted'; atMs: number }
   | { kind: 'tokens'; total: number; atMs: number; delta: TokenTotals }
-  | { kind: 'model'; model: string }
+  /** A turn's settings: `effort` is its `model_reasoning_effort`, when written. */
+  | { kind: 'model'; model: string; effort: string | null }
   | {
       kind: 'limits'; windows: RateWindow[]; plan: string | null; atMs: number;
       /** Context window in use, 0-100: it travels in the same record. */
@@ -402,7 +403,7 @@ export function parseRolloutLine(line: string): RolloutEvent | null {
 
   if (type === 'turn_context') {
     const model = str(payload['model']);
-    return model ? { kind: 'model', model } : null;
+    return model ? { kind: 'model', model, effort: str(payload['effort']) } : null;
   }
 
   // Codex asks the user through a dedicated function_call. The call/response

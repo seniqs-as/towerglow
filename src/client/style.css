@@ -713,21 +713,25 @@ body.is-inside .empty { display: none; }
 }
 
 /* Month by month, the newest on top. A year at most: past a dozen rows it
-   scrolls instead of pushing the card off the screen. */
-.card__months {
+   scrolls instead of pushing the card off the screen. The models above it
+   are a handful, and wear the same table. */
+.card__months,
+.card__models {
   margin-top: 8px;
   max-height: 156px;
   overflow-y: auto;
 }
 
-.card__months table {
+.card__months table,
+.card__models table {
   width: 100%;
   border-collapse: collapse;
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
 }
 
-.card__months th {
+.card__months th,
+.card__models th {
   color: #7f9bb3;
   font-weight: normal;
   letter-spacing: 0.06em;
@@ -735,16 +739,25 @@ body.is-inside .empty { display: none; }
   padding: 0 0 3px 10px;
 }
 
-.card__months td {
+.card__months td,
+.card__models td {
   text-align: right;
   padding: 1px 0 1px 10px;
   white-space: nowrap;
 }
 
 .card__months th:first-child,
-.card__months td:first-child {
+.card__months td:first-child,
+.card__models th:first-child,
+.card__models td:first-child {
   text-align: left;
   padding-left: 0;
+}
+
+/* A model's name can be long: it wraps rather than widening the card. */
+.card__models td:first-child {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* ─────────────────── usage per tool ─────────────────── */

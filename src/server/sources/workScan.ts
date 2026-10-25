@@ -22,7 +22,8 @@ import { validSessionId } from '../watch.ts';
  * (28 MB) in a quarter of a second. After that a session open on screen is
  * read only for what it has added since.
  *
- * What it keeps of a line is its instant and its kind: never its text.
+ * What it keeps of a line is its instant and its kind, and of a reply the
+ * model and effort it ran on: never its text.
  * Every file goes through the allow-list, and no new path is admitted: these
  * are the transcripts and rollouts the tailer already opens.
  */
@@ -53,6 +54,15 @@ const MAX_LINE = 4 << 20;
 const RE_SDK = /"entrypoint":"sdk/;
 /** Codex sessions a person drives: the terminal and the desktop app. `exec` is a script. */
 const CODEX_HUMAN = new Set(['cli', 'vscode']);
+/**
+ * What a model's name looks like: `claude-opus-5-5`, `gpt-6.1-sol`,
+ * `claude-sonnet-5-5[1m]`. Anything else is not counted as a model -- Claude
+ * Code's `<synthetic>` stand-in for a reply it made up, or a field that is not
+ * a name -- because the card sends it to the page as written.
+ */
+const RE_MODEL = /^[A-Za-z0-9][\w.:@/[\]-]{0,63}$/;
+/** `low` ... `max`, `xhigh`, `minimal`: a word. */
+const RE_EFFORT = /^[a-z]{1,16}$/;
 
 interface Entry {
   file: string;
@@ -207,8 +217,9 @@ export class WorkScanner {
 
     if (provider === 'codex') {
       const ev = parseRolloutLine(line);
-      if (!ev || ev.kind === 'model') return;
-      if (ev.kind === 'turn_started') e.meter.prompt(ev.atMs, e.human);
+      if (!ev) return;
+      if (ev.kind === 'model') this.#model(e, ev.model, ev.effort);
+      else if (ev.kind === 'turn_started') e.meter.prompt(ev.atMs, e.human);
       else if (ev.kind === 'turn_completed') e.meter.turnEnd(ev.atMs, ev.durationMs);
       else if (ev.kind === 'turn_aborted') e.meter.abort(ev.atMs);
       else e.meter.activity(ev.atMs);
@@ -225,6 +236,10 @@ export class WorkScanner {
         e.meter.turnEnd(rec.timestamp, rec.durationMs);
         return;
       case 'assistant':
+        // A subagent's reply is its own model, inside the session's turn.
+        if (rec.agentId === null && rec.model) this.#model(e, rec.model, rec.effort);
+        e.meter.activity(rec.timestamp);
+        return;
       case 'tool_result':
       case 'agent_done':
       case 'limit':
@@ -237,6 +252,11 @@ export class WorkScanner {
       default:
         return;
     }
+  }
+
+  #model(e: Entry, model: string, effort: string | null): void {
+    if (!RE_MODEL.test(model)) return;
+    e.meter.model(model, effort !== null && RE_EFFORT.test(effort) ? effort : null);
   }
 
   #locate(src: WorkSource): string | null {

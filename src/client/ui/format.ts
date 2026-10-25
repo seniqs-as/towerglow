@@ -1,5 +1,5 @@
-import { MAX_SCANNED_DEPTH, MAX_SCANNED_FILES, OPERATOR_CAP_MS } from '../../shared/protocol.ts';
-import type { ProjectInfo, ProjectWork, SessionInfo, TokenTotals, WorkMonth } from '../../shared/protocol.ts';
+import { MAX_SCANNED_DEPTH, MAX_SCANNED_FILES, OPERATOR_CAP_MS, addModelTimes } from '../../shared/protocol.ts';
+import type { ModelTime, ProjectInfo, ProjectWork, SessionInfo, TokenTotals, WorkMonth } from '../../shared/protocol.ts';
 import { floorsForSize, levelsForSize } from '../../shared/layout.ts';
 
 /**
@@ -165,6 +165,11 @@ function approxCount(n: number, cut: boolean): string {
  */
 export interface WorkView {
   rows: [string, string][];
+  /**
+   * Model and effort, their AI time, their share of it: the largest first,
+   * then the part no model was recorded for (the user's request, 2026-10-25).
+   */
+  models: [string, string, string][];
   /** Month, tokens, AI time, your time: newest first. */
   months: [string, string, string, string][];
 }
@@ -173,7 +178,7 @@ export function workView(work: ProjectWork): WorkView {
   const total: WorkMonth = {
     month: '', sessions: 0, timed: 0,
     tokens: { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, thinking: 0 },
-    aiMs: 0, operatorMs: 0,
+    aiMs: 0, operatorMs: 0, models: [],
   };
   for (const m of work.months) {
     total.sessions += m.sessions;
@@ -184,6 +189,8 @@ export function workView(work: ProjectWork): WorkView {
     total.tokens.cacheWrite += m.tokens.cacheWrite;
     total.aiMs += m.aiMs;
     total.operatorMs += m.operatorMs;
+    // A server older than the field sends none: its hours are not recorded.
+    addModelTimes(total.models, m.models ?? []);
   }
   const t = total.tokens;
   const sessions = work.live > 0 ? `${total.sessions} \u00b7 ${work.live} open` : String(total.sessions);
@@ -196,15 +203,38 @@ export function workView(work: ProjectWork): WorkView {
       ['your time', hoursText(total.operatorMs, total)],
       ['sessions', sessions],
     ],
+    models: modelRows(total.models, total.aiMs),
     months: work.months.map((m) => [
       monthLabel(m.month), countText(tokensOf(m.tokens)), hoursText(m.aiMs, m), hoursText(m.operatorMs, m),
     ]),
   };
 }
 
+/** Every model that worked is named, however briefly. */
+function modelRows(models: readonly ModelTime[], aiMs: number): [string, string, string][] {
+  if (aiMs <= 0) return [];
+  const brief = (ms: number): string => (ms < 60_000 ? '<1 min' : durationText(ms));
+  const rows: [string, string, string][] = [...models]
+    .filter((m) => m.aiMs > 0)
+    .sort((a, b) => b.aiMs - a.aiMs)
+    // No effort written: the model alone, since a dash on this card means unread hours.
+    .map((m) => [m.effort ? `${m.model} \u00b7 ${m.effort}` : m.model, brief(m.aiMs), shareText(m.aiMs / aiMs)]);
+  // Under a minute the remainder is rounding, not sessions left unread.
+  const rest = aiMs - models.reduce((sum, m) => sum + m.aiMs, 0);
+  if (rest >= 60_000) rows.push(['not recorded', durationText(rest), shareText(rest / aiMs)]);
+  return rows;
+}
+
+function shareText(f: number): string {
+  const pct = Math.round(f * 100);
+  return pct === 0 && f > 0 ? '<1%' : `${pct}%`;
+}
+
 /** What the hours are counted from, and why some read "at least". */
 export const WORK_NOTE =
   'AI time: the agents\' turns as Claude Code and Codex time them, summed across sessions. ' +
+  'Each turn counts for the model and effort it ran on, as the tool recorded them (a model alone: no effort recorded); ' +
+  'not recorded: sessions read before Towerglow kept models. ' +
   `Your time: for each message you send, the time since the session last did anything, up to ${OPERATOR_CAP_MS / 60_000} minutes; ` +
   'a stretch with several projects going is split among them. ' +
   '\u2265 and \u2014: some or all of the sessions could not be read, and their hours are missing. ' +
@@ -221,8 +251,12 @@ function tokensOf(t: TokenTotals): number {
  */
 function hoursText(ms: number, of: Pick<WorkMonth, 'sessions' | 'timed'>): string {
   if (of.timed === 0) return of.sessions === 0 ? '0 h' : '\u2014';
-  const shown = ms < 3_600_000 ? `${Math.round(ms / 60_000)} min` : `${(ms / 3_600_000).toFixed(1)} h`;
+  const shown = durationText(ms);
   return of.timed < of.sessions ? `\u2265 ${shown}` : shown;
+}
+
+function durationText(ms: number): string {
+  return ms < 3_600_000 ? `${Math.round(ms / 60_000)} min` : `${(ms / 3_600_000).toFixed(1)} h`;
 }
 
 function countText(n: number): string {

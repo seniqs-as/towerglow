@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { ProviderId, StatusConfidence, TokenTotals, WorkMonth } from '../../shared/protocol.ts';
+import { addModelTimes } from '../../shared/protocol.ts';
+import type { ModelTime, ProviderId, StatusConfidence, TokenTotals, WorkMonth } from '../../shared/protocol.ts';
 import { shareOperator } from './workMeter.ts';
 import type { WorkTotals } from './workMeter.ts';
 
@@ -129,6 +130,8 @@ export interface PeriodTotals {
   operatorMs: number;
   /** How many had their time read: the hours count only those. */
   timed: number;
+  /** `aiMs` by model and effort, for the rows whose split was read. */
+  models: ModelTime[];
 }
 
 export interface ProjectHistory {
@@ -180,7 +183,10 @@ export interface History {
    * is decided over all of them. One with a row (a resumed session) replaces it.
    */
   workOf(projectId: string, live: readonly LiveWork[]): WorkMonth[];
-  /** Rows whose time has not been read yet: what the startup pass reads. */
+  /**
+   * Rows whose time has not been read yet, and rows timed before models
+   * were read (2026-10-25), read once more for them: what the startup pass reads.
+   */
   untimed(): ClosedSession[];
   /**
    * The weighted tokens burned by one tool over a time window.
@@ -228,7 +234,7 @@ function zero(): PeriodTotals {
     sessions: 0, turns: 0, toolCalls: 0,
     tokens: { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, thinking: 0 },
     costUsd: 0, apiMs: 0, toolMs: 0, linesAdded: 0, linesRemoved: 0,
-    reported: 0, watched: 0, aiMs: 0, operatorMs: 0, timed: 0,
+    reported: 0, watched: 0, aiMs: 0, operatorMs: 0, timed: 0, models: [],
   };
 }
 
@@ -253,6 +259,7 @@ function add(into: PeriodTotals, row: ClosedSession, operatorMs: number): void {
     into.aiMs += row.work.aiMs;
     into.operatorMs += operatorMs;
     into.timed += 1;
+    addModelTimes(into.models, row.work.models ?? []);
   }
 }
 
@@ -266,7 +273,22 @@ function sharesOf(rows: Iterable<{ id: string; projectId: string; work?: WorkTot
 function isWork(v: unknown): v is WorkTotals {
   const w = v as WorkTotals | null;
   return !!w && typeof w.aiMs === 'number' && Number.isFinite(w.aiMs)
-    && Array.isArray(w.operator) && w.operator.every((n) => typeof n === 'number' && Number.isFinite(n));
+    && Array.isArray(w.operator) && w.operator.every((n) => typeof n === 'number' && Number.isFinite(n))
+    && (w.models === undefined || isModels(w.models));
+}
+
+function isModels(v: unknown): v is ModelTime[] {
+  return Array.isArray(v) && v.every((m: ModelTime | null) =>
+    !!m && typeof m.model === 'string' && (m.effort === null || typeof m.effort === 'string')
+    && typeof m.aiMs === 'number' && Number.isFinite(m.aiMs));
+}
+
+function copyWork(w: WorkTotals): WorkTotals {
+  return {
+    aiMs: w.aiMs,
+    operator: [...w.operator],
+    ...(w.models ? { models: w.models.map((m) => ({ ...m })) } : {}),
+  };
 }
 
 function monthOf(at: number): string {
@@ -299,8 +321,10 @@ export function createHistory(stateDir: string): History {
       for (const f of raw.folds ?? []) {
         if (f && typeof f.month === 'string' && f.totals) {
           // Months folded before the hours existed have none: zero hours
-          // over zero timed sessions, which the card reads as unknown.
+          // over zero timed sessions, which the card reads as unknown. Before
+          // the models, no split: their hours read as not recorded.
           f.totals = { ...zero(), ...f.totals };
+          if (!isModels(f.totals.models)) f.totals.models = [];
           folds.set(`${f.projectId}|${f.provider}|${f.month}`, f);
         }
       }
@@ -417,7 +441,7 @@ export function createHistory(stateDir: string): History {
         out.push({
           ...r,
           tokens: { ...r.tokens },
-          ...(r.work ? { work: { aiMs: r.work.aiMs, operator: [...r.work.operator] } } : {}),
+          ...(r.work ? { work: copyWork(r.work) } : {}),
         });
       }
       return out.sort((a, b) => a.startedAt - b.startedAt);
@@ -434,7 +458,7 @@ export function createHistory(stateDir: string): History {
           m = {
             month: key, sessions: 0, timed: 0,
             tokens: { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, thinking: 0 },
-            aiMs: 0, operatorMs: 0,
+            aiMs: 0, operatorMs: 0, models: [],
           };
           months.set(key, m);
         }
@@ -456,6 +480,7 @@ export function createHistory(stateDir: string): History {
         addTokens(m, f.totals.tokens);
         m.aiMs += f.totals.aiMs;
         m.operatorMs += f.totals.operatorMs;
+        addModelTimes(m.models, f.totals.models);
       }
       const one = (r: { id: string; projectId: string; startedAt: number; tokens: TokenTotals; work?: WorkTotals | null }): void => {
         if (r.projectId !== projectId) return;
@@ -466,15 +491,20 @@ export function createHistory(stateDir: string): History {
           m.timed += 1;
           m.aiMs += r.work.aiMs;
           m.operatorMs += shares.get(r.id) ?? 0;
+          addModelTimes(m.models, r.work.models ?? []);
         }
       };
       for (const r of rows) one(r);
       for (const l of live) one(l);
 
+      for (const m of months.values()) m.models.sort((a, b) => b.aiMs - a.aiMs);
       return [...months.values()].sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
     },
 
-    untimed: () => [...sessions.values()].filter((r) => !r.work).map((r) => ({ ...r, tokens: { ...r.tokens } })),
+    // A row whose transcript is gone keeps the hours it had, without a split.
+    untimed: () => [...sessions.values()]
+      .filter((r) => !r.work?.models)
+      .map((r) => ({ ...r, tokens: { ...r.tokens }, ...(r.work ? { work: copyWork(r.work) } : {}) })),
 
     weightedSince(provider, since, now) {
       let total = 0;

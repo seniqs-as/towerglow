@@ -63,12 +63,16 @@ function prompt(at: number, entrypoint = 'cli'): string {
   });
 }
 
-function reply(at: number): string {
+function reply(at: number, model = 'claude-opus-5-5', effort: string | null = 'xhigh'): string {
   return JSON.stringify({
     type: 'assistant', uuid: `a${at}`, timestamp: iso(at), sessionId: S1, entrypoint: 'cli',
-    message: { model: 'claude-opus-5', content: [{ type: 'text', text: 'done' }], usage: { input_tokens: 1 } },
+    message: { model, content: [{ type: 'text', text: 'done' }], usage: { input_tokens: 1 } },
+    ...(effort === null ? {} : { effort, perTurnEffort: effort }),
   });
 }
+
+const opus = (aiMs: number): { model: string; effort: string | null; aiMs: number } =>
+  ({ model: 'claude-opus-5-5', effort: 'xhigh', aiMs });
 
 function turnEnd(at: number, durationMs: number): string {
   return JSON.stringify({
@@ -101,7 +105,7 @@ test('an interactive session gives the turns\' own durations and the gaps you fi
   const f = fixture();
   f.claude(session());
   const work = await new WorkScanner({ policy: f.policy }).finish(claudeSrc);
-  assert.deepEqual(work, { aiMs: 5 * MIN, operator: [T0 + 3 * MIN, T0 + 5 * MIN] });
+  assert.deepEqual(work, { aiMs: 5 * MIN, operator: [T0 + 3 * MIN, T0 + 5 * MIN], models: [opus(5 * MIN)] });
 });
 
 test('a worker\'s session has the AI\'s hours and none of yours', async () => {
@@ -111,7 +115,7 @@ test('a worker\'s session has the AI\'s hours and none of yours', async () => {
     prompt(T0 + 40 * MIN, 'sdk-cli'), reply(T0 + 45 * MIN),
   ]);
   const work = await new WorkScanner({ policy: f.policy }).finish(claudeSrc);
-  assert.deepEqual(work, { aiMs: 25 * MIN, operator: [] });
+  assert.deepEqual(work, { aiMs: 25 * MIN, operator: [], models: [opus(25 * MIN)] });
 });
 
 test('an open session read twice counts what it added once, like a full read', async () => {
@@ -171,7 +175,7 @@ test('a line too long to parse is skipped, and the ones after it still count', a
   });
   f.claude([prompt(T0), huge, reply(T0 + 2 * MIN), turnEnd(T0 + 3 * MIN, 3 * MIN), prompt(T0 + 4 * MIN)]);
   const work = await new WorkScanner({ policy: f.policy }).finish(claudeSrc);
-  assert.deepEqual(work, { aiMs: 3 * MIN, operator: [T0 + 3 * MIN, T0 + 4 * MIN] });
+  assert.deepEqual(work, { aiMs: 3 * MIN, operator: [T0 + 3 * MIN, T0 + 4 * MIN], models: [opus(3 * MIN)] });
 });
 
 test('a session whose transcript is gone has no hours, not zero hours', async () => {
@@ -192,6 +196,7 @@ test('a Codex chat gives its turns\' durations and the gaps between them', async
   assert.deepEqual(work, {
     aiMs: 5 * MIN,
     operator: [T0 + 20 * MIN - OPERATOR_CAP_MS, T0 + 20 * MIN],
+    models: [],
   });
 });
 
@@ -205,5 +210,64 @@ test('a codex exec session is a script: the AI\'s hours, none of yours', async (
     codexEvent(T0 + 7 * MIN, { type: 'task_complete', turn_id: 't2', duration_ms: MIN }),
   ]);
   const work = await new WorkScanner({ policy: f.policy }).finish(codexSrc);
-  assert.deepEqual(work, { aiMs: 5 * MIN, operator: [] });
+  assert.deepEqual(work, { aiMs: 5 * MIN, operator: [], models: [] });
+});
+
+test('each turn counts for the model and effort it ran on, and the split sums to the AI time', async () => {
+  // The user's request, 2026-10-25: which models and efforts a project took.
+  // A /model between two turns moves the second turn, not the first.
+  const f = fixture();
+  f.claude([
+    prompt(T0), reply(T0 + MIN), reply(T0 + 2 * MIN), turnEnd(T0 + 3 * MIN, 3 * MIN),
+    prompt(T0 + 5 * MIN), reply(T0 + 6 * MIN, 'claude-sonnet-5-5', 'high'), turnEnd(T0 + 7 * MIN, 2 * MIN),
+    prompt(T0 + 9 * MIN), reply(T0 + 10 * MIN, 'claude-opus-5-5', 'xhigh'), turnEnd(T0 + 13 * MIN, 4 * MIN),
+  ]);
+  const work = await new WorkScanner({ policy: f.policy }).finish(claudeSrc);
+  assert.deepEqual(work?.models, [opus(7 * MIN), { model: 'claude-sonnet-5-5', effort: 'high', aiMs: 2 * MIN }]);
+  assert.equal(work?.models?.reduce((sum, m) => sum + m.aiMs, 0), work?.aiMs);
+});
+
+test('a subagent\'s replies and Claude Code\'s synthetic ones do not name the session\'s model', async () => {
+  // `<synthetic>` is the stand-in Claude Code writes for a reply it made up
+  // (an interruption, an error): 5 of 35 000 replies on disk on 2026-10-25.
+  const f = fixture();
+  const sub = JSON.stringify({
+    type: 'assistant', uuid: 'sub', timestamp: iso(T0 + 2 * MIN), sessionId: S1, agentId: 'a1b2c3',
+    isSidechain: true, effort: 'low',
+    message: { model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'found it' }] },
+  });
+  f.claude([
+    prompt(T0), reply(T0 + MIN), sub, reply(T0 + 3 * MIN, '<synthetic>', null), turnEnd(T0 + 4 * MIN, 4 * MIN),
+  ]);
+  const work = await new WorkScanner({ policy: f.policy }).finish(claudeSrc);
+  assert.deepEqual(work?.models, [opus(4 * MIN)]);
+});
+
+test('a reply from a version that wrote no effort keeps its model, with no effort', async () => {
+  const f = fixture();
+  f.claude([prompt(T0), reply(T0 + MIN, 'claude-opus-5-5', null), turnEnd(T0 + 2 * MIN, 2 * MIN)]);
+  const work = await new WorkScanner({ policy: f.policy }).finish(claudeSrc);
+  assert.deepEqual(work?.models, [{ model: 'claude-opus-5-5', effort: null, aiMs: 2 * MIN }]);
+});
+
+test('a Codex turn counts for the model and effort of its turn_context, written after it starts', async () => {
+  const f = fixture();
+  const context = (at: number, model: string, effort: string): string => JSON.stringify({
+    timestamp: iso(at), type: 'turn_context',
+    payload: { turn_id: `t${at}`, cwd: CWD, model, effort, summary: 'auto' },
+  });
+  f.codex([
+    codexMeta('vscode'),
+    codexEvent(T0, { type: 'task_started', turn_id: 't1' }),
+    context(T0 + 1000, 'gpt-6.1-sol', 'high'),
+    codexEvent(T0 + 4 * MIN, { type: 'task_complete', turn_id: 't1', duration_ms: 4 * MIN }),
+    codexEvent(T0 + 6 * MIN, { type: 'task_started', turn_id: 't2' }),
+    context(T0 + 6 * MIN + 1000, 'gpt-6-sol', 'medium'),
+    codexEvent(T0 + 7 * MIN, { type: 'task_complete', turn_id: 't2', duration_ms: MIN }),
+  ]);
+  const work = await new WorkScanner({ policy: f.policy }).finish(codexSrc);
+  assert.deepEqual(work?.models, [
+    { model: 'gpt-6.1-sol', effort: 'high', aiMs: 4 * MIN },
+    { model: 'gpt-6-sol', effort: 'medium', aiMs: MIN },
+  ]);
 });

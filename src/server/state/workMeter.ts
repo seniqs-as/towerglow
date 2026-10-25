@@ -1,4 +1,5 @@
-import { OPERATOR_CAP_MS } from '../../shared/protocol.ts';
+import { OPERATOR_CAP_MS, addModelTimes } from '../../shared/protocol.ts';
+import type { ModelTime } from '../../shared/protocol.ts';
 
 /**
  * How long the agents worked for a session, and how long you did.
@@ -22,6 +23,16 @@ import { OPERATOR_CAP_MS } from '../../shared/protocol.ts';
  * is the first message of a session, which nothing measures. Over the 30 days
  * on disk the cap moved the total from 37 hours (5 minutes) to 69 (15): it is
  * a choice, and the card names it.
+ *
+ * MODELS (the user's request, 2026-10-25): each turn's time goes to the
+ * model and effort of the last reply read in it (Codex writes its
+ * `turn_context` just after `task_started`); a turn with no reply goes to
+ * what the session last ran on, or, at its start, to the first model it
+ * names. So the split sums to the AI time to the millisecond, and only a file
+ * that names no model at all gives its time and no split. Measured on
+ * 2026-10-25 over the 232 sessions of the last 30 days: without the second
+ * rule, two sessions had time before their first reply -- a `/clear` and
+ * messages queued behind it, nine minutes in one of them.
  */
 
 export interface WorkTotals {
@@ -36,11 +47,21 @@ export interface WorkTotals {
    * summed per session your time came to 54.7 hours, shared it is 51.1.
    */
   operator: number[];
+  /**
+   * `aiMs` by model and effort, the largest first. Absent on rows timed
+   * before models were read: those are read again once.
+   */
+  models?: ModelTime[];
 }
 
 export class WorkMeter {
   #ai = 0;
   #operator: number[] = [];
+  #models: ModelTime[] = [];
+  /** What the session last ran on: the turn's, once it has replied. */
+  #model: { model: string; effort: string | null } | null = null;
+  /** Time worked before any model was named: the first one named takes it. */
+  #unnamed = 0;
   /** The start of a turn whose end has not been read yet. */
   #open: number | null = null;
   /** The last thing the session did. */
@@ -64,17 +85,24 @@ export class WorkMeter {
 
   /** The end of a turn, with the tool's own measure of it when there is one. */
   turnEnd(at: number, durationMs: number): void {
-    if (durationMs > 0) this.#ai += durationMs;
-    else if (this.#open !== null) this.#ai += Math.max(0, at - this.#open);
+    if (durationMs > 0) this.#credit(durationMs);
+    else if (this.#open !== null) this.#credit(Math.max(0, at - this.#open));
     this.#open = null;
     this.#touch(at);
   }
 
   /** A turn stopped by you (Codex's `turn_aborted`): it ran until now. */
   abort(at: number): void {
-    if (this.#open !== null) this.#ai += Math.max(0, at - this.#open);
+    if (this.#open !== null) this.#credit(Math.max(0, at - this.#open));
     this.#open = null;
     this.#touch(at);
+  }
+
+  /** What the session runs on from here: a reply's model, a Codex turn's settings. */
+  model(model: string, effort: string | null): void {
+    this.#model = { model, effort };
+    if (this.#unnamed > 0) addModelTimes(this.#models, [{ model, effort, aiMs: this.#unnamed }]);
+    this.#unnamed = 0;
   }
 
   /** Anything else the session did: a reply, a tool's result. */
@@ -85,12 +113,23 @@ export class WorkMeter {
   /** So far: a turn still open counts up to the last thing it did. */
   totals(): WorkTotals {
     const open = this.#open !== null ? Math.max(0, this.#last - this.#open) : 0;
-    return { aiMs: this.#ai + open, operator: [...this.#operator] };
+    const models: ModelTime[] = [];
+    addModelTimes(models, this.#models);
+    if (open > 0 && this.#model) addModelTimes(models, [{ ...this.#model, aiMs: open }]);
+    models.sort((a, b) => b.aiMs - a.aiMs);
+    return { aiMs: this.#ai + open, operator: [...this.#operator], models };
   }
 
   #closeAtLast(): void {
-    if (this.#open !== null) this.#ai += Math.max(0, this.#last - this.#open);
+    if (this.#open !== null) this.#credit(Math.max(0, this.#last - this.#open));
     this.#open = null;
+  }
+
+  #credit(ms: number): void {
+    this.#ai += ms;
+    if (ms <= 0) return;
+    if (this.#model) addModelTimes(this.#models, [{ ...this.#model, aiMs: ms }]);
+    else this.#unnamed += ms;
   }
 
   #touch(at: number): void {
