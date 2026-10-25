@@ -14,8 +14,15 @@ import type { ModelTime } from '../../shared/protocol.ts';
  * the prompt to the end of the turn to the second, except in turns that
  * waited, where it is shorter. A turn that ends without one -- `claude -p`
  * never writes it, so every worker of a plan, or a turn killed halfway --
- * counts from its start to the last thing it did. Sessions add up: two
- * working for the same hour are two hours of AI.
+ * counts from its start to the last thing the AGENT did in it: a reply, a
+ * tool's result, a compaction. Not to the last thing that happened in the
+ * session: measured on 2026-10-25 over the 232 sessions of the last 30 days,
+ * that made 201.3 hours of AI out of 188.1 -- thirteen of them in one
+ * session, where an automatic compaction opened a turn in the evening and a
+ * background task delivering the next morning closed it, and nine minutes
+ * in a `/clear` (a prompt the model never sees) followed by the deliveries of
+ * the conversation it had cleared. Sessions add up: two working for the same
+ * hour are two hours of AI.
  *
  * YOUR TIME is an estimate, and a floor: for every message you send, the
  * time since the session last did anything, up to `OPERATOR_CAP_MS` --
@@ -28,12 +35,18 @@ import type { ModelTime } from '../../shared/protocol.ts';
  * model and effort of the last reply read in it (Codex writes its
  * `turn_context` just after `task_started`); a turn with no reply goes to
  * what the session last ran on, or, at its start, to the first model it
- * names. So the split sums to the AI time to the millisecond, and only a file
- * that names no model at all gives its time and no split. Measured on
- * 2026-10-25 over the 232 sessions of the last 30 days: without the second
- * rule, two sessions had time before their first reply -- a `/clear` and
- * messages queued behind it, nine minutes in one of them.
+ * names -- a compaction or a refusal before the first reply. So the split
+ * sums to the AI time to the millisecond, and only a file that names no model
+ * at all gives its time and no split.
  */
+
+/**
+ * How the numbers below are counted. A row on record read under an older
+ * count is read again, once: a funder must not get two rules in one total.
+ * 1, 2026-10-24: the hours. 2, 2026-10-25: the models, and a turn with no
+ * measure of its own ends at the agent's last work.
+ */
+export const WORK_RULES = 2;
 
 export interface WorkTotals {
   /** The agents' turns, in ms. */
@@ -49,9 +62,11 @@ export interface WorkTotals {
   operator: number[];
   /**
    * `aiMs` by model and effort, the largest first. Absent on rows timed
-   * before models were read: those are read again once.
+   * before models were read.
    */
   models?: ModelTime[];
+  /** `WORK_RULES` when it was read. Absent: the first count. */
+  rules?: number;
 }
 
 export class WorkMeter {
@@ -66,6 +81,8 @@ export class WorkMeter {
   #open: number | null = null;
   /** The last thing the session did. */
   #last = 0;
+  /** The last thing the agent did: where a turn with no measure of its own ends. */
+  #worked = 0;
 
   /**
    * A message arrived: yours (`human`), or a script's -- a worker's
@@ -105,23 +122,33 @@ export class WorkMeter {
     this.#unnamed = 0;
   }
 
-  /** Anything else the session did: a reply, a tool's result. */
+  /** The agent at work: a reply, a tool's result, a compaction. */
+  work(at: number): void {
+    if (at > this.#worked) this.#worked = at;
+    this.#touch(at);
+  }
+
+  /**
+   * Something the session did that is not the agent working: a background
+   * task's delivery, a reminder of the context left. It is where your time
+   * starts counting, and it does not stretch a turn.
+   */
   activity(at: number): void {
     this.#touch(at);
   }
 
   /** So far: a turn still open counts up to the last thing it did. */
   totals(): WorkTotals {
-    const open = this.#open !== null ? Math.max(0, this.#last - this.#open) : 0;
+    const open = this.#open !== null ? Math.max(0, this.#worked - this.#open) : 0;
     const models: ModelTime[] = [];
     addModelTimes(models, this.#models);
     if (open > 0 && this.#model) addModelTimes(models, [{ ...this.#model, aiMs: open }]);
     models.sort((a, b) => b.aiMs - a.aiMs);
-    return { aiMs: this.#ai + open, operator: [...this.#operator], models };
+    return { aiMs: this.#ai + open, operator: [...this.#operator], models, rules: WORK_RULES };
   }
 
   #closeAtLast(): void {
-    if (this.#open !== null) this.#credit(Math.max(0, this.#last - this.#open));
+    if (this.#open !== null) this.#credit(Math.max(0, this.#worked - this.#open));
     this.#open = null;
   }
 

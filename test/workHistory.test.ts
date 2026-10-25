@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHistory } from '../src/server/state/history.ts';
 import type { ClosedSession } from '../src/server/state/history.ts';
+import { WORK_RULES } from '../src/server/state/workMeter.ts';
 
 /**
  * A project's work month by month, as its tower's card shows it (the user's
@@ -54,7 +55,7 @@ test('a project\'s months add up its sessions\' tokens and hours', () => {
 
 test('a session whose time was never read counts its tokens, and the month says it is a floor', () => {
   const h = createHistory(tmp());
-  h.record(row('read', { work: { aiMs: MIN, operator: [], models: [] } }));
+  h.record(row('read', { work: { aiMs: MIN, operator: [], models: [], rules: WORK_RULES } }));
   h.record(row('unread'));
   const m = h.workOf('p1', [])[0];
   assert.equal(m?.sessions, 2);
@@ -109,7 +110,7 @@ test('hours read survive a restart, and a malformed one is read again instead of
   const dir = tmp();
   const a = createHistory(dir);
   a.record(row('ok'));
-  a.merge('ok', { work: { aiMs: 9 * MIN, operator: [NOW - DAY, NOW - DAY + MIN], models: [] } });
+  a.merge('ok', { work: { aiMs: 9 * MIN, operator: [NOW - DAY, NOW - DAY + MIN], models: [], rules: WORK_RULES } });
   a.record(row('bad', { work: { aiMs: 'lots', operator: [] } as never }));
   a.save();
   const b = createHistory(dir);
@@ -157,18 +158,20 @@ test('a month adds up its sessions\' models, one line per model and effort, the 
   ]);
 });
 
-test('a row timed before models were read is read once more, and keeps its hours until then', () => {
-  // Rows timed on 2026-10-24 have hours and no split: the startup pass reads
-  // them again. One whose transcript is gone keeps its hours, without a split.
+test('a row counted under older rules is read once more, and keeps its numbers until then', () => {
+  // Rows timed on 2026-10-24 have hours and no split, and rows read in the
+  // morning of 2026-10-25 turns stretched by deliveries: the startup pass
+  // reads them again. One whose transcript is gone keeps what it had.
   const dir = tmp();
   const a = createHistory(dir);
   a.record(row('timed', { work: { aiMs: 9 * MIN, operator: [] } }));
-  a.record(row('split', { work: { aiMs: MIN, operator: [], models: [opus(MIN)] } }));
+  a.record(row('morning', { work: { aiMs: 0, operator: [], models: [] } }));
+  a.record(row('split', { work: { aiMs: MIN, operator: [], models: [opus(MIN)], rules: WORK_RULES } }));
   a.save();
   const b = createHistory(dir);
   const again = b.untimed();
-  assert.deepEqual(again.map((r) => r.id), ['timed']);
-  assert.equal(again[0]?.work?.aiMs, 9 * MIN);
+  assert.deepEqual(again.map((r) => r.id).sort(), ['morning', 'timed']);
+  assert.equal(again.find((r) => r.id === 'timed')?.work?.aiMs, 9 * MIN);
   const m = b.workOf('p1', [])[0];
   assert.equal(m?.aiMs, 10 * MIN);
   assert.deepEqual(m?.models, [opus(MIN)]);

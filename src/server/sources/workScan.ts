@@ -222,7 +222,7 @@ export class WorkScanner {
       else if (ev.kind === 'turn_started') e.meter.prompt(ev.atMs, e.human);
       else if (ev.kind === 'turn_completed') e.meter.turnEnd(ev.atMs, ev.durationMs);
       else if (ev.kind === 'turn_aborted') e.meter.abort(ev.atMs);
-      else e.meter.activity(ev.atMs);
+      else e.meter.work(ev.atMs);
       return;
     }
 
@@ -238,12 +238,17 @@ export class WorkScanner {
       case 'assistant':
         // A subagent's reply is its own model, inside the session's turn.
         if (rec.agentId === null && rec.model) this.#model(e, rec.model, rec.effort);
-        e.meter.activity(rec.timestamp);
+        e.meter.work(rec.timestamp);
         return;
       case 'tool_result':
-      case 'agent_done':
       case 'limit':
       case 'compact':
+        e.meter.work(rec.timestamp);
+        return;
+      // Written into the session whether or not a turn is running: a task
+      // delivered after its turn ended, or after a `/clear`, is not that
+      // turn going on.
+      case 'agent_done':
       case 'context':
         e.meter.activity(rec.timestamp);
         return;

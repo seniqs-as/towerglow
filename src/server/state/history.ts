@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { addModelTimes } from '../../shared/protocol.ts';
 import type { ModelTime, ProviderId, StatusConfidence, TokenTotals, WorkMonth } from '../../shared/protocol.ts';
-import { shareOperator } from './workMeter.ts';
+import { WORK_RULES, shareOperator } from './workMeter.ts';
 import type { WorkTotals } from './workMeter.ts';
 
 /**
@@ -184,8 +184,8 @@ export interface History {
    */
   workOf(projectId: string, live: readonly LiveWork[]): WorkMonth[];
   /**
-   * Rows whose time has not been read yet, and rows timed before models
-   * were read (2026-10-25), read once more for them: what the startup pass reads.
+   * Rows whose time has not been read yet, and rows read under an older
+   * `WORK_RULES`, to be read once more: what the startup pass reads.
    */
   untimed(): ClosedSession[];
   /**
@@ -274,7 +274,8 @@ function isWork(v: unknown): v is WorkTotals {
   const w = v as WorkTotals | null;
   return !!w && typeof w.aiMs === 'number' && Number.isFinite(w.aiMs)
     && Array.isArray(w.operator) && w.operator.every((n) => typeof n === 'number' && Number.isFinite(n))
-    && (w.models === undefined || isModels(w.models));
+    && (w.models === undefined || isModels(w.models))
+    && (w.rules === undefined || typeof w.rules === 'number');
 }
 
 function isModels(v: unknown): v is ModelTime[] {
@@ -288,6 +289,7 @@ function copyWork(w: WorkTotals): WorkTotals {
     aiMs: w.aiMs,
     operator: [...w.operator],
     ...(w.models ? { models: w.models.map((m) => ({ ...m })) } : {}),
+    ...(w.rules !== undefined ? { rules: w.rules } : {}),
   };
 }
 
@@ -501,9 +503,9 @@ export function createHistory(stateDir: string): History {
       return [...months.values()].sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
     },
 
-    // A row whose transcript is gone keeps the hours it had, without a split.
+    // A row whose transcript is gone keeps the numbers it had.
     untimed: () => [...sessions.values()]
-      .filter((r) => !r.work?.models)
+      .filter((r) => r.work?.rules !== WORK_RULES)
       .map((r) => ({ ...r, tokens: { ...r.tokens }, ...(r.work ? { work: copyWork(r.work) } : {}) })),
 
     weightedSince(provider, since, now) {

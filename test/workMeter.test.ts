@@ -16,7 +16,7 @@ test('the AI time is the tool\'s own measure of each turn, not the span around i
   // and the tool leaves the wait out. Its number is the one that holds.
   const m = new WorkMeter();
   m.prompt(T0, true);
-  m.activity(T0 + 2 * MIN);
+  m.work(T0 + 2 * MIN);
   m.turnEnd(T0 + 60 * MIN, 12 * MIN);
   assert.equal(m.totals().aiMs, 12 * MIN);
 });
@@ -26,12 +26,12 @@ test('a worker\'s turn, which never writes its duration, runs to the last thing 
   // hours of AI until this.
   const m = new WorkMeter();
   m.prompt(T0, false);
-  m.activity(T0 + 5 * MIN);
-  m.activity(T0 + 25 * MIN);
+  m.work(T0 + 5 * MIN);
+  m.work(T0 + 25 * MIN);
   assert.equal(m.totals().aiMs, 25 * MIN);
   // Resumed with your answer: the first turn ended where it stopped.
   m.prompt(T0 + 90 * MIN, false);
-  m.activity(T0 + 100 * MIN);
+  m.work(T0 + 100 * MIN);
   assert.equal(m.totals().aiMs, 35 * MIN);
 });
 
@@ -40,12 +40,12 @@ test('a turn still open counts for the model it runs on, and one killed before r
   const m = new WorkMeter();
   m.prompt(T0, true);
   m.model('claude-opus-5-5', 'xhigh');
-  m.activity(T0 + 4 * MIN);
+  m.work(T0 + 4 * MIN);
   assert.deepEqual(m.totals().models, [{ model: 'claude-opus-5-5', effort: 'xhigh', aiMs: 4 * MIN }]);
   m.turnEnd(T0 + 5 * MIN, 5 * MIN);
-  // Stopped before its first reply: nothing named another model.
+  // Stopped before its first reply, after compacting: nothing named another model.
   m.prompt(T0 + 8 * MIN, true);
-  m.activity(T0 + 9 * MIN);
+  m.work(T0 + 9 * MIN);
   m.prompt(T0 + 12 * MIN, true);
   const t = m.totals();
   assert.equal(t.aiMs, 6 * MIN);
@@ -53,11 +53,11 @@ test('a turn still open counts for the model it runs on, and one killed before r
 });
 
 test('time before the session\'s first reply goes to the first model it names', () => {
-  // Measured on 2026-10-25: a `/clear` and messages queued behind it made
-  // nine minutes of turn before any reply named a model.
+  // A resumed session that compacts before it answers: the compaction is the
+  // model's work, and its record names no model.
   const m = new WorkMeter();
   m.prompt(T0, true);
-  m.activity(T0 + 9 * MIN);
+  m.work(T0 + 9 * MIN);
   m.prompt(T0 + 11 * MIN, true);
   assert.deepEqual(m.totals().models, []);
   m.model('claude-opus-5-5', 'xhigh');
@@ -65,6 +65,28 @@ test('time before the session\'s first reply goes to the first model it names', 
   const t = m.totals();
   assert.equal(t.aiMs, 10 * MIN);
   assert.deepEqual(t.models, [{ model: 'claude-opus-5-5', effort: 'xhigh', aiMs: 10 * MIN }]);
+});
+
+test('a turn with no measure of its own ends at the agent\'s last work, not at a delivery after it', () => {
+  // Measured on 2026-10-25: a `/clear` -- a prompt no model sees -- then the
+  // deliveries of background tasks from the conversation it had cleared, and
+  // nine minutes of AI that never worked. The deliveries still start your time.
+  const m = new WorkMeter();
+  m.prompt(T0, true);
+  m.activity(T0 + 5 * MIN);
+  m.activity(T0 + 9 * MIN);
+  m.prompt(T0 + 11 * MIN, true);
+  const t = m.totals();
+  assert.equal(t.aiMs, 0);
+  assert.deepEqual(t.operator, [T0 + 9 * MIN, T0 + 11 * MIN]);
+  // A worker that stopped, then a subagent's delivery: the turn is the work.
+  const worker = new WorkMeter();
+  worker.prompt(T0, false);
+  worker.work(T0 + 25 * MIN);
+  worker.activity(T0 + 40 * MIN);
+  assert.equal(worker.totals().aiMs, 25 * MIN);
+  worker.prompt(T0 + 90 * MIN, false);
+  assert.equal(worker.totals().aiMs, 25 * MIN);
 });
 
 test('your time is the stretch since the session last did anything, up to the cap', () => {
@@ -86,7 +108,7 @@ test('a session\'s first message and a script\'s messages count none of your tim
   assert.deepEqual(m.totals().operator, []);
   const worker = new WorkMeter();
   worker.prompt(T0, false);
-  worker.activity(T0 + MIN);
+  worker.work(T0 + MIN);
   worker.prompt(T0 + 3 * MIN, false);
   assert.deepEqual(worker.totals().operator, []);
 });
@@ -94,9 +116,9 @@ test('a session\'s first message and a script\'s messages count none of your tim
 test('a message typed while the agent works joins its turn instead of ending it', () => {
   const m = new WorkMeter();
   m.prompt(T0, true);
-  m.activity(T0 + MIN);
+  m.work(T0 + MIN);
   m.prompt(T0 + 2 * MIN, true, true);
-  m.activity(T0 + 9 * MIN);
+  m.work(T0 + 9 * MIN);
   m.turnEnd(T0 + 10 * MIN, 0);
   assert.equal(m.totals().aiMs, 10 * MIN);
 });
@@ -104,7 +126,7 @@ test('a message typed while the agent works joins its turn instead of ending it'
 test('a turn you stop runs until you stopped it', () => {
   const m = new WorkMeter();
   m.prompt(T0, true);
-  m.activity(T0 + MIN);
+  m.work(T0 + MIN);
   m.abort(T0 + 3 * MIN);
   assert.equal(m.totals().aiMs, 3 * MIN);
 });

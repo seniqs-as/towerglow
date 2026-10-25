@@ -894,11 +894,11 @@ async function start(cfg: Config): Promise<number> {
   /*
    * The hours of the rows on record that have none yet: the ones written
    * before hours existed, and the ones just recovered -- and, once, the ones
-   * timed before models were read (2026-10-25). In the background, one
-   * transcript at a time: the server is already answering. A transcript
-   * Claude Code has deleted leaves its row as it was, without hours or
-   * without a split, and the card says so; it is looked for again at the
-   * next start, which costs a stat.
+   * counted under an older `WORK_RULES`. In the background, one transcript
+   * at a time: the server is already answering. A transcript Claude Code has
+   * deleted leaves its row as it was, without hours or without a split, and
+   * the card says so; it is looked for again at the next start, which costs
+   * a stat.
    */
   void Promise.all(history.untimed().map((row) => timeClosed(row))).then((done) => {
     const n = done.filter(Boolean).length;

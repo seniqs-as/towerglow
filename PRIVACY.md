@@ -112,9 +112,11 @@ month. They are measures, not a timesheet:
 
 - **The agents' time** is each turn as the tool times it: Claude Code's turn
   duration, Codex's. A turn that records none (`claude -p`, the CEOs'
-  workers, or a turn killed halfway) runs from its start to the last thing it
-  did. Sessions add up: two sessions working through the same hour are two
-  hours.
+  workers, or a turn killed halfway) runs from its start to the last thing
+  the agent did in it: a reply, a tool's result, a compaction. A background
+  task delivering later does not stretch it, and a command Claude Code
+  answers by itself, such as `/clear`, counts nothing. Sessions add up: two
+  sessions working through the same hour are two hours.
 - **Your time** is an estimate, and a floor: for each message you type into a
   session, the time since that session last did anything, up to ten minutes.
   Watching an agent work is not counted, nor is the first message of a

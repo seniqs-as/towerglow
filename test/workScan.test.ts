@@ -8,6 +8,7 @@ import type { WorkSource } from '../src/server/sources/workScan.ts';
 import { slugFor } from '../src/server/paths.ts';
 import type { PathPolicy } from '../src/server/paths.ts';
 import { OPERATOR_CAP_MS } from '../src/shared/protocol.ts';
+import { WORK_RULES } from '../src/server/state/workMeter.ts';
 
 /**
  * A session's hours read from its whole transcript (the user's request,
@@ -105,7 +106,7 @@ test('an interactive session gives the turns\' own durations and the gaps you fi
   const f = fixture();
   f.claude(session());
   const work = await new WorkScanner({ policy: f.policy }).finish(claudeSrc);
-  assert.deepEqual(work, { aiMs: 5 * MIN, operator: [T0 + 3 * MIN, T0 + 5 * MIN], models: [opus(5 * MIN)] });
+  assert.deepEqual(work, { aiMs: 5 * MIN, operator: [T0 + 3 * MIN, T0 + 5 * MIN], models: [opus(5 * MIN)], rules: WORK_RULES });
 });
 
 test('a worker\'s session has the AI\'s hours and none of yours', async () => {
@@ -115,7 +116,7 @@ test('a worker\'s session has the AI\'s hours and none of yours', async () => {
     prompt(T0 + 40 * MIN, 'sdk-cli'), reply(T0 + 45 * MIN),
   ]);
   const work = await new WorkScanner({ policy: f.policy }).finish(claudeSrc);
-  assert.deepEqual(work, { aiMs: 25 * MIN, operator: [], models: [opus(25 * MIN)] });
+  assert.deepEqual(work, { aiMs: 25 * MIN, operator: [], models: [opus(25 * MIN)], rules: WORK_RULES });
 });
 
 test('an open session read twice counts what it added once, like a full read', async () => {
@@ -175,7 +176,7 @@ test('a line too long to parse is skipped, and the ones after it still count', a
   });
   f.claude([prompt(T0), huge, reply(T0 + 2 * MIN), turnEnd(T0 + 3 * MIN, 3 * MIN), prompt(T0 + 4 * MIN)]);
   const work = await new WorkScanner({ policy: f.policy }).finish(claudeSrc);
-  assert.deepEqual(work, { aiMs: 3 * MIN, operator: [T0 + 3 * MIN, T0 + 4 * MIN], models: [opus(3 * MIN)] });
+  assert.deepEqual(work, { aiMs: 3 * MIN, operator: [T0 + 3 * MIN, T0 + 4 * MIN], models: [opus(3 * MIN)], rules: WORK_RULES });
 });
 
 test('a session whose transcript is gone has no hours, not zero hours', async () => {
@@ -197,6 +198,7 @@ test('a Codex chat gives its turns\' durations and the gaps between them', async
     aiMs: 5 * MIN,
     operator: [T0 + 20 * MIN - OPERATOR_CAP_MS, T0 + 20 * MIN],
     models: [],
+    rules: WORK_RULES,
   });
 });
 
@@ -210,7 +212,7 @@ test('a codex exec session is a script: the AI\'s hours, none of yours', async (
     codexEvent(T0 + 7 * MIN, { type: 'task_complete', turn_id: 't2', duration_ms: MIN }),
   ]);
   const work = await new WorkScanner({ policy: f.policy }).finish(codexSrc);
-  assert.deepEqual(work, { aiMs: 5 * MIN, operator: [], models: [] });
+  assert.deepEqual(work, { aiMs: 5 * MIN, operator: [], models: [], rules: WORK_RULES });
 });
 
 test('each turn counts for the model and effort it ran on, and the split sums to the AI time', async () => {
@@ -270,4 +272,29 @@ test('a Codex turn counts for the model and effort of its turn_context, written 
     { model: 'gpt-6.1-sol', effort: 'high', aiMs: 4 * MIN },
     { model: 'gpt-6-sol', effort: 'medium', aiMs: MIN },
   ]);
+});
+
+test('a /clear and the background deliveries after it are no AI time, and your time starts at the last one', async () => {
+  // Measured on 2026-10-25, in these shapes: the slash command is a prompt
+  // no model sees, Claude Code answers it by itself, and the tasks of the
+  // conversation it cleared deliver into the queue minutes later.
+  const f = fixture();
+  const clear = JSON.stringify({
+    type: 'user', uuid: 'c1', timestamp: iso(T0), sessionId: S1, entrypoint: 'cli', cwd: CWD,
+    message: { role: 'user', content: '<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>' },
+  });
+  const local = JSON.stringify({
+    type: 'system', subtype: 'local_command', timestamp: iso(T0 + 100), sessionId: S1, isMeta: false,
+    content: '<local-command-stdout></local-command-stdout>', commandRun: { command: 'clear', args: '' },
+  });
+  const delivery = (at: number, n: number): string => JSON.stringify({
+    type: 'queue-operation', operation: 'enqueue', timestamp: iso(at), sessionId: S1,
+    content: `<task-notification>\n<task-id>b${n}c0ffee</task-id>\n<tool-use-id>toolu_01Delivered${n}</tool-use-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>`,
+  });
+  f.claude([
+    clear, local, delivery(T0 + 5 * MIN, 1), delivery(T0 + 9 * MIN, 2),
+    prompt(T0 + 11 * MIN), reply(T0 + 12 * MIN), turnEnd(T0 + 13 * MIN, 2 * MIN),
+  ]);
+  const work = await new WorkScanner({ policy: f.policy }).finish(claudeSrc);
+  assert.deepEqual(work, { aiMs: 2 * MIN, operator: [T0 + 9 * MIN, T0 + 11 * MIN], models: [opus(2 * MIN)], rules: WORK_RULES });
 });
