@@ -85,12 +85,15 @@ function fakeCodexDir(opts: { nowMs: number; closeTurn: boolean; ageMs?: number;
   return dir;
 }
 
-async function collect(dir: string): Promise<{ sessions: LiveSession[]; events: DeltaEvent[]; projects: string[] }> {
+async function collect(
+  dir: string,
+  alive?: (pid: number) => boolean,
+): Promise<{ sessions: LiveSession[]; events: DeltaEvent[]; projects: string[] }> {
   const provider = new CodexProvider({
     codexDir: dir,
     policy: { claudeDir: '/nowhere/.claude', codexDir: dir, homeDir: '/Users/tester' },
     redactPaths: false, cmdNames: true, titles: true,
-    known: () => true, produces: () => true, devAssert: true, stats: createStats(),
+    known: () => true, produces: () => true, devAssert: true, stats: createStats(), alive,
   });
   const sessions: LiveSession[] = [];
   const events: DeltaEvent[] = [];
@@ -298,6 +301,66 @@ test('an interrupted turn is over: the session is idle, not working', async () =
   const { sessions } = await collect(backgroundExitDir(Date.now(), 18 * 3_600_000, 'aborted'));
   assert.equal(sessions.length, 1, 'the interrupt is the user at work: the session is there');
   assert.equal(sessions[0]!.status, 'idle', 'turn_aborted left the turn open');
+});
+
+/** The logs name `pid` as the process serving the chat, as one run of Codex Desktop does for all of its chats. */
+function withPid(dir: string, pid: number): void {
+  const db = new DatabaseSync(path.join(dir, 'logs_2.sqlite'));
+  db.exec('CREATE TABLE logs (thread_id TEXT, process_uuid TEXT, ts INTEGER)');
+  db.prepare('INSERT INTO logs VALUES (?, ?, ?)').run(SID, `pid:${pid}:3cae`, Math.floor(Date.now() / 1000));
+  db.close();
+}
+
+test('a chat whose app was closed leaves the stage at once, not half an hour later', async () => {
+  // Field case, 2026-10-25: Codex Desktop closed at 13:17, the chat in RPG
+  // still on its tower at 13:21, when thirty minutes from its last turn ran
+  // out. Codex keeps no registry of live chats, but the pid in its logs died
+  // with the app.
+  const idle = fakeCodexDir({ nowMs: Date.now() - 60_000, closeTurn: true });
+  withPid(idle, 4242);
+  assert.equal((await collect(idle, () => true)).sessions.length, 1, 'the app still runs');
+  assert.deepEqual((await collect(idle, (pid) => pid !== 4242)).sessions, [], 'the closed app keeps its chat on stage');
+
+  // Quit in the middle of a turn: nothing is working any more.
+  const busy = fakeCodexDir({ nowMs: Date.now(), closeTurn: false });
+  withPid(busy, 4242);
+  assert.deepEqual((await collect(busy, () => false)).sessions, []);
+
+  // A pid the logs never named decides nothing: the window does, as before.
+  const unknown = fakeCodexDir({ nowMs: Date.now() - 60_000, closeTurn: true });
+  assert.equal((await collect(unknown, () => false)).sessions.length, 1);
+});
+
+test('a closed chat reopened in a new process comes back before the logs name its pid', async () => {
+  // The logs are read every 30 s: until then they still name the dead
+  // process, and only the rollout says the chat works again.
+  const dir = fakeCodexDir({ nowMs: Date.now() - 60_000, closeTurn: true });
+  withPid(dir, 4242);
+  const file = path.join(dir, 'sessions', '2026', '09', '10', fs.readdirSync(path.join(dir, 'sessions', '2026', '09', '10'))[0]!);
+  const provider = new CodexProvider({
+    codexDir: dir,
+    policy: { claudeDir: '/nowhere/.claude', codexDir: dir, homeDir: '/Users/tester' },
+    redactPaths: false, cmdNames: true, titles: true,
+    known: () => true, produces: () => true, devAssert: true, stats: createStats(), alive: () => false,
+  });
+  const sessions: LiveSession[] = [];
+  provider.start({
+    onProjects: () => {},
+    onSessions: (s) => sessions.splice(0, sessions.length, ...s),
+    onEvents: () => {},
+  });
+  try {
+    await new Promise((r) => setTimeout(r, 1400));
+    assert.deepEqual(sessions, [], 'the closed chat is on stage');
+    const t = Date.now();
+    fs.appendFileSync(file, line({ timestamp: iso(t), ordinal: 9, type: 'event_msg',
+      payload: { type: 'task_started', turn_id: 'turn-2', started_at: Math.floor(t / 1000) } }));
+    await new Promise((r) => setTimeout(r, 1400));
+    assert.equal(sessions.length, 1, 'the reopened chat is not on stage');
+    assert.equal(sessions[0]!.status, 'busy');
+  } finally {
+    provider.stop();
+  }
 });
 
 test('a Codex compaction is told by the head of a line too big to parse, and only its time', async () => {

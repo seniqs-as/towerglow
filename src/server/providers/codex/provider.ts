@@ -4,6 +4,7 @@ import { CODEX_CALLS } from '../../../shared/toolCategories.ts';
 import { assertSafe, clampUnsafe } from '../../parse/redact.ts';
 import type { ParseStats } from '../../parse/records.ts';
 import { fileIdFor, projectIdFor, redactRelPath } from '../../state/ids.ts';
+import { isAlive } from '../../sources/registrySource.ts';
 import { Tailer } from '../../watch/tailer.ts';
 import { CodexStore } from './store.ts';
 import {
@@ -71,6 +72,8 @@ export interface CodexProviderOptions {
   devAssert: boolean;
   /** Shared with the rest of the server: the redaction guard counts here. */
   stats: ParseStats;
+  /** Does the process exist? `process.kill(pid, 0)` unless a test says otherwise. */
+  alive?: (pid: number) => boolean;
 }
 
 /**
@@ -178,6 +181,8 @@ export class CodexProvider implements Provider {
   #pidsReadAt = 0;
   /** Sessions seen without a pid yet, and since when: see PID_CHASE_MS. */
   #pidChase = new Map<string, number>();
+  /** Sessions whose process was seen dead, which pid and since when: see `#closed`. */
+  #gone = new Map<string, { pid: number; since: number }>();
   #limitsSeeded = false;
   #heldSeeded = false;
   /**
@@ -312,6 +317,7 @@ export class CodexProvider implements Provider {
       if (alive.has(id) || held(a, now) || this.#reading.has(id)) continue;
       void a.tailer.close();
       this.#attached.delete(id);
+      this.#gone.delete(id);
     }
 
     for (const a of this.#attached.values()) void a.tailer.pump();
@@ -467,6 +473,37 @@ export class CodexProvider implements Provider {
     }
   }
 
+  /**
+   * The process that wrote the chat is gone: the app or the terminal was
+   * closed, and the chat with it.
+   *
+   * The live window alone kept a closed chat on stage for up to half an hour:
+   * on 2026-10-25 Codex Desktop was closed at 13:17 (the exit of the dev
+   * server it killed is the rollout's last line) and the chat stayed on its
+   * tower until 13:21, thirty minutes after its last turn. The logs name one
+   * pid per run of the app, shared by every chat it serves and gone when the
+   * app quits, so a dead pid is a closed chat. A pid recycled by another
+   * process reads alive, and the window decides as before. A chat stopped at
+   * the usage limit leaves too, as a Claude session does with its terminal.
+   *
+   * Work dated after the death was first seen comes from a new process the
+   * logs do not name yet -- the chat reopened -- and brings it back.
+   */
+  #closed(a: Attached, now: number): boolean {
+    const id = a.meta.sessionId;
+    const pid = this.#pids.get(id)?.pid ?? 0;
+    if (pid === 0 || (this.#opts.alive ?? isAlive)(pid)) {
+      this.#gone.delete(id);
+      return false;
+    }
+    let seen = this.#gone.get(id);
+    if (!seen || seen.pid !== pid) {
+      seen = { pid, since: now };
+      this.#gone.set(id, seen);
+    }
+    return a.lastActivityMs < seen.since;
+  }
+
   #sessions(now: number): LiveSession[] {
     const out: LiveSession[] = [];
     for (const a of this.#attached.values()) {
@@ -474,6 +511,7 @@ export class CodexProvider implements Provider {
       // every tick; off stage until it works again, unless it is stopped at
       // the usage limit and waits for you.
       if (now - a.lastActivityMs >= LIVE_WINDOW_MS && !held(a, now)) continue;
+      if (this.#closed(a, now)) continue;
       // Three distinct states, all derivable from the rollout:
       //  - waiting: a question to the user is still unanswered
       //  - busy:    turn open, `task_started` without `task_complete`

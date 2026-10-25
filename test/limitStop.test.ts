@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { World } from '../src/server/state/world.ts';
 import type { LiveSession } from '../src/server/providers/types.ts';
 import { parseLine, createStats } from '../src/server/parse/records.ts';
@@ -268,12 +269,12 @@ const head = (at: number): string =>
     payload: { session_id: CODEX_SID, cwd: CWD, cli_version: '0.154.0' } }) +
   line({ timestamp: iso(at), ordinal: 1, type: 'turn_context', payload: { model: 'gpt-6-astra', cwd: CWD } });
 
-async function codexSessions(dir: string): Promise<LiveSession[]> {
+async function codexSessions(dir: string, alive?: (pid: number) => boolean): Promise<LiveSession[]> {
   const provider = new CodexProvider({
     codexDir: dir,
     policy: { claudeDir: '/nowhere/.claude', codexDir: dir, homeDir: '/Users/tester' },
     redactPaths: false, cmdNames: true, titles: true,
-    known: () => true, produces: () => true, devAssert: true, stats: createStats(),
+    known: () => true, produces: () => true, devAssert: true, stats: createStats(), alive,
   });
   const sessions: LiveSession[] = [];
   provider.start({
@@ -330,6 +331,19 @@ test('a Codex chat stopped hours ago stays on stage, also after a restart of the
   const sessions = await codexSessions(dir);
   assert.equal(sessions.length, 1);
   assert.equal(sessions[0]!.limitStoppedAt, at);
+});
+
+test('a Codex chat stopped at the limit leaves with its app, as a Claude session with its terminal', async () => {
+  // Held a day because nothing said whether the chat was still open; the pid
+  // of the app in Codex's logs says it.
+  const at = Date.now() - 5 * 3_600_000;
+  const { dir } = codexDir(head(at - 10_000) + refusedTurn('t1', at), 5 * 3_600_000);
+  const db = new DatabaseSync(path.join(dir, 'logs_2.sqlite'));
+  db.exec('CREATE TABLE logs (thread_id TEXT, process_uuid TEXT, ts INTEGER)');
+  db.prepare('INSERT INTO logs VALUES (?, ?, ?)').run(CODEX_SID, 'pid:4242:3cae', Math.floor(at / 1000));
+  db.close();
+  assert.equal((await codexSessions(dir, () => true)).length, 1, 'the app still runs');
+  assert.deepEqual(await codexSessions(dir, () => false), []);
 });
 
 test('a Codex chat stopped more than a day ago, or that went on, is not held', async () => {

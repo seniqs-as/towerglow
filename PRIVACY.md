@@ -54,7 +54,8 @@ the code that reads sessions.
   same times as above and for whether it is a chat or a `codex exec` script.
   Codex compresses older logs, and those are not read.
 - `session_index.jsonl`: thread names. `config.toml`: only the project paths.
-  `logs_2.sqlite`: opened read-only, for the process id of each session.
+  `logs_2.sqlite`: opened read-only, for the process id of each session:
+  when that process is gone, the session was closed and leaves the scene.
 - `auth.json` and `history.jsonl` are explicitly refused.
 
 **Your projects:**
