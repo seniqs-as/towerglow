@@ -36,4 +36,8 @@ test('a project from a server that does not count folders shows a dash, not zero
 test('the note names the limits the counts come from', () => {
   assert.match(SIZE_NOTE, /20,000 files/);
   assert.match(SIZE_NOTE, /10 levels/);
+  // tycho's tower, 2026-10-31: the card has to say why a folder of
+  // gigabytes can stand lower than one of code.
+  assert.match(SIZE_NOTE, /\.gitignore/);
+  assert.match(SIZE_NOTE, /cloned/);
 });

@@ -106,17 +106,24 @@ function isAllowedCodexPath(parts: string[]): boolean {
 }
 
 /**
- * True only for the two readable git files, under any project directory.
+ * True only for the readable git files, under any project directory.
  * Explicitly excluded: .git/config (remote URLs, sometimes credentials),
  * .git/objects/ and .git/COMMIT_EDITMSG (the full message, not just the subject).
+ *
+ * The ignore files -- `.gitignore` anywhere, `.git/info/exclude` -- are read
+ * for their patterns, which decide what the size scan counts (2026-10-31):
+ * what a project ignores is not its own, and a tower grown from downloaded
+ * data says nothing about the work. The patterns stay in the server.
  */
 function isAllowedGitPath(abs: string): boolean {
   const parts = abs.split(path.sep);
+  if (parts[parts.length - 1] === '.gitignore') return true;
   const i = parts.lastIndexOf('.git');
   if (i < 0) return false;
   const tail = parts.slice(i + 1);
   if (tail.length === 1 && tail[0] === 'HEAD') return true;
   if (tail.length === 2 && tail[0] === 'logs' && tail[1] === 'HEAD') return true;
+  if (tail.length === 2 && tail[0] === 'info' && tail[1] === 'exclude') return true;
   return false;
 }
 

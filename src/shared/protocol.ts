@@ -144,11 +144,13 @@ export interface ProjectInfo {
   /** Last known activity. Orders the city: the most recent stand in the center. */
   lastActiveAt: number;
   /**
-   * The project's file count: decides how tall the building is. A scan that
-   * reached `MAX_SCANNED_FILES` stopped there, so the folder holds at least that.
+   * The project's file count: decides how tall the building is. Its own
+   * files: what its ignore files leave out and the repositories cloned into
+   * it are not counted. A scan that reached `MAX_SCANNED_FILES` stopped
+   * there, so the folder holds at least that.
    */
   size: number;
-  /** The folders the same scan went into: hidden, dependency and build folders are skipped. */
+  /** The folders the same scan went into: hidden, dependency, build, ignored and cloned folders are skipped. */
   dirs: number;
   /** Subject of the last commit: it is what the sign shows instead of
    *  the session's handle. `null` if the project is not a repo. */

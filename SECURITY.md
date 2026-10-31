@@ -35,9 +35,10 @@ can read `~/.claude` and `~/.codex` directly, and `~/.towerglow/token` too.
 ## Safeguards in the observatory
 
 - **Read-only on your data.** Session data is read through an allow-list,
-  default-deny, so a file nobody listed cannot be opened. The contents of
-  your project files are never read. Transcripts, the session registry and
-  the Codex databases are never written.
+  default-deny, so a file nobody listed cannot be opened. Of your project
+  files, only the ignore files (`.gitignore`, `.git/info/exclude`) are read,
+  for the patterns that decide what a tower counts. Transcripts, the session
+  registry and the Codex databases are never written.
 - **One door to the page.** Everything the page receives is built field by
   field in one place (`src/server/parse/redact.ts`), with a length cap on
   every string, and every event passes the same check again on its way out.

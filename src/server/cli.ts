@@ -823,7 +823,7 @@ async function start(cfg: Config): Promise<number> {
   // on only by `sizeTimer` below, where somebody is working.
   const sizeCache = new Map<string, ProjectMeasure>();
   const measureNow = (cwd: string): ProjectMeasure => {
-    const size = existsOnDisk(cwd) ? measureProject(cwd, cfg.homeDir) : NOTHING_MEASURED;
+    const size = existsOnDisk(cwd) ? measureProject(cwd, policy) : NOTHING_MEASURED;
     sizeCache.set(cwd, size);
     return size;
   };

@@ -38,7 +38,7 @@ unless you start with `--ceo`.
 | --- | --- | --- |
 | Network | None. The server listens on `127.0.0.1` only | Your own `claude` and `codex` CLIs talk to Anthropic and OpenAI, as they do when you use them. Workers reach your git remote where you tick push, and the web where you tick web |
 | Model calls | Never | When you ask something, and the workers you approve |
-| Your projects | Never written. File contents are never read | The CEOs can read your code; workers you approve edit it, commit and push |
+| Your projects | Never written. File contents are never read, except `.gitignore` patterns | The CEOs can read your code; workers you approve edit it, commit and push |
 | Your plan's quota, or API credit | Untouched | Used, within limits you set |
 
 What the observatory reads, shows and stores is in [PRIVACY.md](PRIVACY.md).
@@ -202,7 +202,9 @@ and is waiting for you: a session refused at the limit is not started again
 when the limit resets. The cross stays until the session goes on, and its
 hover says when the limit resets. The info button on a tower's name, or on
 the badge of a session working there, opens its card: how tall the tower is
-and what that counts, and what the project took, in total and month by
+and what that counts (the project's own files: what its `.gitignore` leaves
+out, like downloaded data, and repositories cloned into it are not), and
+what the project took, in total and month by
 month: the tokens, the hours the agents worked and your own, estimated from
 when you send messages and never counted in two projects at once, and which
 models and efforts the agents' hours ran on. How the hours are counted, and
@@ -216,8 +218,9 @@ so the click opens one that follows what it is doing, read-only.
 - **It reads** the session records and transcripts of Claude Code
   (`~/.claude`) and Codex (`~/.codex`), the branch and reflog of your
   projects' git repositories, and the names of the files and folders in your
-  projects, to size the towers. It never reads the contents of your project
-  files, nor the text of Claude's replies.
+  projects, to size the towers, counting only what their `.gitignore` keeps.
+  Apart from those ignore patterns, it never reads the contents of your
+  project files, nor the text of Claude's replies.
 - **It shows**, in a page served only to your own machine, metadata: project
   names, session titles, which tools run on which files, token counts, commit
   subjects. Flags like `--redact-paths`, `--no-titles` and

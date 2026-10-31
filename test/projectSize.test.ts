@@ -18,6 +18,7 @@ import type { ProjectMeasure } from '../src/server/sources/projectsSource.ts';
  */
 
 const NEW = '/Users/tester/code/tower_defense';
+const POLICY = { claudeDir: '/Users/tester/.claude', codexDir: '/Users/tester/.codex', homeDir: '/Users/tester' };
 const IDLE = '/Users/tester/code/archive';
 
 function world(): World {
@@ -138,12 +139,12 @@ test('the scan counts the folders it goes into, and none it skips', () => {
     }
     // app, app/Http, app/Models, storage, storage/framework, storage/framework/views:
     // node_modules and .git are neither entered nor counted.
-    assert.deepEqual(measureProject(root), { files: 5, dirs: 6 });
+    assert.deepEqual(measureProject(root, POLICY), { files: 5, dirs: 6 });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
 test('the home folder registered as a project measures nothing', () => {
-  assert.deepEqual(measureProject('/Users/tester', '/Users/tester'), { files: 0, dirs: 0 });
+  assert.deepEqual(measureProject('/Users/tester', POLICY), { files: 0, dirs: 0 });
 });

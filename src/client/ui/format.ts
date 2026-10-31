@@ -131,7 +131,9 @@ export type SizeView = 'city' | 'colony';
  * the rest). The height in the unit of the view on screen -- floors in the
  * city, decks in the colony: the same count on two scales -- then the files
  * and folders the server's scan found. Approximate by construction: the scan
- * skips hidden, dependency and build folders and stops at
+ * skips hidden, dependency and build folders, what the project's ignore
+ * files leave out and the repositories cloned into it (2026-10-31: tycho's
+ * tower stood on its downloaded market data), and stops at
  * `MAX_SCANNED_FILES`, where a count only says "at least".
  */
 export function sizeRows(project: Pick<ProjectInfo, 'size' | 'dirs'>, view: SizeView): [string, string][] {
@@ -150,7 +152,8 @@ export function sizeRows(project: Pick<ProjectInfo, 'size' | 'dirs'>, view: Size
 export const SIZE_NOTE =
   `Counted by name, up to ${MAX_SCANNED_FILES.toLocaleString('en-US')} files and ` +
   `${MAX_SCANNED_DEPTH} levels deep, ` +
-  'without hidden folders, dependencies and build output.';
+  'without hidden folders, dependencies, build output, what the project\'s ' +
+  '.gitignore leaves out and repositories cloned into it.';
 
 function approxCount(n: number, cut: boolean): string {
   const shown = n.toLocaleString('en-US');

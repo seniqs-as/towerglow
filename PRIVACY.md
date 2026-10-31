@@ -70,7 +70,16 @@ the code that reads sessions.
 - The names of the files and folders in each project, to size its tower and
   to say on its card how many there are: at most 20,000 files and 10 levels
   deep, skipping hidden folders, `node_modules` and build folders, never
-  following symlinks. **The contents of your files are never read.**
+  following symlinks.
+- To count only a project's own files, its ignore files: every `.gitignore`
+  in it (and in the folders above it, up to its repository's root) and
+  `.git/info/exclude`, read for their patterns. What they leave out is not
+  counted, so downloaded data does not make a tower taller. Inside a
+  repository, a folder that is a repository of its own is skipped when it
+  was cloned, which the first line of its `.git/logs/HEAD` says (only that
+  word is kept), or when it is a submodule. The patterns and the names they
+  match stay in the server; the page gets the counts.
+  **No other contents of your files are read.**
 
 ## What reaches the page
 

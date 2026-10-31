@@ -3,6 +3,8 @@ import * as path from 'node:path';
 import { assertReadable, slugFor } from '../paths.ts';
 import type { PathPolicy } from '../paths.ts';
 import { MAX_SCANNED_DEPTH, MAX_SCANNED_FILES } from '../../shared/protocol.ts';
+import { isIgnored, parseIgnore, readIgnoreFile, readPrefix } from './ignoreRules.ts';
+import type { IgnoreRule } from './ignoreRules.ts';
 
 /**
  * List of known projects.
@@ -96,7 +98,7 @@ export function makeExcluder(patterns: readonly string[]): (cwd: string) => bool
 const SKIP_DIRS = new Set([
   'node_modules', '.git', '.svn', '.hg', 'dist', 'build', 'out', 'target',
   'vendor', '.next', '.nuxt', '.venv', 'venv', '__pycache__', '.cache',
-  'coverage', 'Pods', '.gradle', '.idea', '.terraform', 'tmp', '.DS_Store',
+  'coverage', 'Pods', '.gradle', '.idea', '.terraform', 'tmp',
 ]);
 
 /** What a scan of a project's folder found: it sizes the tower, and the details say it. */
@@ -108,44 +110,167 @@ export interface ProjectMeasure {
 
 export const NOTHING_MEASURED: ProjectMeasure = { files: 0, dirs: 0 };
 
+/** git's `core.ignorecase` where `git init` turns it on by default. */
+const CASELESS_FS = process.platform === 'darwin' || process.platform === 'win32';
+
+/**
+ * The repository a project's folder belongs to: the nearest folder holding a
+ * `.git`, the folder itself included. Never the home folder or above it: a
+ * home kept under git for its dotfiles often ignores `*`, and would leave
+ * every project in it that is not a repository of its own with no files.
+ * Only `lstat`s: nothing is opened.
+ */
+function repositoryTop(cwd: string, homeDir: string): { top: string; gitDir: boolean } | null {
+  const home = path.resolve(homeDir);
+  let dir = path.resolve(cwd);
+  for (;;) {
+    if (dir === home) return null;
+    try {
+      const st = fs.lstatSync(path.join(dir, '.git'));
+      // A `.git` FILE is a worktree or a submodule: its info/exclude is elsewhere.
+      return { top: dir, gitDir: st.isDirectory() };
+    } catch {
+      // not here
+    }
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
+}
+
+/** `a/b/c` from the top to `dir`, whatever the platform's separator. */
+const relUnder = (top: string, dir: string): string =>
+  path.relative(top, dir).split(path.sep).join('/');
+
+/**
+ * The rules in force at the scan's root, before its own `.gitignore`: the
+ * repository's `info/exclude`, then every `.gitignore` from the top down to
+ * the root's parent, in git's order -- a deeper file overrides a shallower
+ * one, and both override `info/exclude`.
+ */
+function inheritedRules(root: string, repo: { top: string; gitDir: boolean }, policy: PathPolicy): IgnoreRule[] {
+  const rules: IgnoreRule[] = [];
+  if (repo.gitDir) {
+    const text = readIgnoreFile(path.join(repo.top, '.git', 'info', 'exclude'), policy);
+    if (text !== null) rules.push(...parseIgnore(text, '', CASELESS_FS));
+  }
+  // The top is the root or one of its ancestors: `repositoryTop` walked up to it.
+  const between: string[] = [];
+  for (let dir = root; dir !== repo.top && dir !== path.dirname(dir); ) {
+    dir = path.dirname(dir);
+    between.unshift(dir);
+  }
+  for (const dir of between) {
+    const text = readIgnoreFile(path.join(dir, '.gitignore'), policy);
+    if (text !== null) rules.push(...parseIgnore(text, relUnder(repo.top, dir), CASELESS_FS));
+  }
+  return rules;
+}
+
 /**
  * Size of the project in number of files. It decides the building's height.
  *
  * It is a BOUNDED scan: it stops at 20,000 files and 10 levels, and skips the
- * heavy directories. It reads only entry names and types, never a file's
- * contents, so it does not touch the read allow-list -- which governs
- * contents. The folders are counted on the same pass, from the same names.
+ * heavy directories. The files counted are the project's own, as git would
+ * see them (2026-10-31, the user's request after tycho's tower grew with the
+ * data it downloaded): what the project's `.gitignore` files and
+ * `.git/info/exclude` leave out is not entered, and inside a repository a
+ * folder that is a repository of its own -- a clone, a submodule -- is
+ * somebody else's code. Those ignore files and the first line of a nested
+ * repository's reflog are the only contents read, through the allow-list
+ * (`ignoreRules.ts`); everything else is entry names and types. The folders
+ * are counted on the same pass, from the same names.
  */
-export function measureProject(cwd: string, homeDir?: string): ProjectMeasure {
+export function measureProject(cwd: string, policy: PathPolicy): ProjectMeasure {
   // The home directory registered as a project is not a project: scanning it
   // is slow and produces a towering building that means nothing.
-  if (homeDir && path.resolve(cwd) === path.resolve(homeDir)) return NOTHING_MEASURED;
+  if (path.resolve(cwd) === path.resolve(policy.homeDir)) return NOTHING_MEASURED;
+
+  const root = path.resolve(cwd);
+  const repo = repositoryTop(root, policy.homeDir);
+  // Paths are matched from the repository's top, so a rule written there for
+  // `sub/data/` holds when the project is `sub`. Outside a repository, the
+  // scan's own root is the top.
+  const top = repo?.top ?? root;
+  const rootRules = repo ? inheritedRules(root, repo, policy) : [];
 
   let count = 0;
   let dirs = 0;
-  const stack: { dir: string; depth: number }[] = [{ dir: cwd, depth: 0 }];
+  const stack: { dir: string; depth: number; rules: IgnoreRule[] }[] = [{ dir: root, depth: 0, rules: rootRules }];
 
   while (stack.length > 0 && count < MAX_SCANNED_FILES) {
-    const { dir, depth } = stack.pop()!;
+    const { dir, depth, rules: inherited } = stack.pop()!;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch {
       continue; // permissions, broken links, vanished directory: carry on
     }
+    const base = relUnder(top, dir);
+    let rules = inherited;
+    if (entries.some((e) => e.name === '.gitignore' && e.isFile())) {
+      const text = readIgnoreFile(path.join(dir, '.gitignore'), policy);
+      if (text !== null) rules = [...inherited, ...parseIgnore(text, base, CASELESS_FS)];
+    }
+    const relOf = (name: string): string => (base === '' ? name : `${base}/${name}`);
     for (const entry of entries) {
       if (count >= MAX_SCANNED_FILES) break;
       if (entry.name.startsWith('.') && entry.isDirectory()) continue;
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(entry.name) || depth >= MAX_SCANNED_DEPTH) continue;
+        const sub = path.join(dir, entry.name);
+        if (rules.length > 0 && isIgnored(rules, relOf(entry.name), true)) continue;
+        // Outside a repository there is no outer project to keep a clone
+        // apart from: a folder of repositories is what its folders hold.
+        if (repo && isForeignRepository(sub, policy)) continue;
         dirs++;
-        stack.push({ dir: path.join(dir, entry.name), depth: depth + 1 });
+        stack.push({ dir: sub, depth: depth + 1, rules });
       } else if (entry.isFile()) {
+        if (SKIP_FILES.has(entry.name)) continue;
+        if (rules.length > 0 && isIgnored(rules, relOf(entry.name), false)) continue;
         count++;
       }
     }
   }
   return { files: count, dirs };
+}
+
+/**
+ * Files that are never a project's: macOS leaves one in every folder the
+ * Finder opens. Git leaves them out through the user's global excludes,
+ * which are not read.
+ */
+const SKIP_FILES = new Set(['.DS_Store']);
+
+/** Where a reflog's first line says how the repository began. */
+const REFLOG_HEAD_BYTES = 4096;
+
+/**
+ * Inside a repository, a folder that is a repository of its own is somebody
+ * else's code when git says so. A `.git` FILE is a submodule or a linked
+ * worktree, which the outer repository records as one entry, not as files;
+ * a reflog that begins with `clone:` is a download -- the ten strategy
+ * repositories in tycho's `harvest/cache` all begin that way. A nested
+ * repository made with `git init` is still work done here: seniqs_website_redesign
+ * has one in `labs`, empty, while the outer repository tracks its files.
+ * A clone whose first reflog line was expired by `git gc` (90 days by
+ * default) is counted: what cannot be shown to be a download is not called one.
+ */
+function isForeignRepository(dir: string, policy: PathPolicy): boolean {
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(path.join(dir, '.git'));
+  } catch {
+    return false;
+  }
+  if (!st.isDirectory()) return true;
+  const head = readPrefix(path.join(dir, '.git', 'logs', 'HEAD'), policy, REFLOG_HEAD_BYTES);
+  if (head === null) return false;
+  // `<old> <new> <who> <when> <tz>\t<action>`: only the action's verb is
+  // looked at; the clone's URL and the author are dropped with the rest.
+  const first = head.split('\n', 1)[0] ?? '';
+  const tab = first.indexOf('\t');
+  return tab >= 0 && first.slice(tab + 1).startsWith('clone:');
 }
 
 /**

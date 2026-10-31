@@ -73,6 +73,33 @@ test('git: allows only HEAD and logs/HEAD', () => {
   assert.equal(isReadable(path.join(repo, '.git', 'logs', 'HEAD'), policy), true);
 });
 
+/**
+ * The size scan counts a project's own files, and what it ignores is not
+ * its own (2026-10-31: tycho's tower stood on gigabytes of downloaded market
+ * data). The ignore files are read for their patterns; nothing that only
+ * looks like one is.
+ */
+test('git: allows the ignore files, and nothing that looks like them', () => {
+  const repo = '/Users/tester/code/app';
+  assert.equal(isReadable(path.join(repo, '.gitignore'), policy), true);
+  assert.equal(isReadable(path.join(repo, 'harvest', '.gitignore'), policy), true);
+  assert.equal(isReadable(path.join(repo, '.git', 'info', 'exclude'), policy), true);
+  for (const f of [
+    path.join(repo, '.gitignore.bak'),
+    path.join(repo, 'my.gitignore'),
+    path.join(repo, '.gitignore', 'x'),
+    path.join(repo, '.git', 'info', 'attributes'),
+    path.join(repo, '.git', 'info', 'refs'),
+    path.join(repo, '.git', 'exclude'),
+    path.join(repo, '.env'),
+    // Under ~/.claude only its own list holds.
+    p('projects', '.gitignore'),
+    p('.gitignore'),
+  ]) {
+    assert.equal(isReadable(f, policy), false, `should have denied: ${f}`);
+  }
+});
+
 test('git: DENIES config, objects, COMMIT_EDITMSG and the rest', () => {
   const g = (...s: string[]) => path.join('/Users/tester/code/app/.git', ...s);
   for (const f of [
